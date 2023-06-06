@@ -28,7 +28,7 @@ setup(
     # There are some restrictions on what makes a valid project name
     # specification here:
     # https://packaging.python.org/specifications/core-metadata/#name
-    name='pynecraft',  # Required
+    name='pyncraft',  # Required
 
     # Versions should comply with PEP 440:
     # https://www.python.org/dev/peps/pep-0440/
@@ -36,11 +36,11 @@ setup(
     # For a discussion on single-sourcing the version across setup.py and the
     # project code, see
     # https://packaging.python.org/guides/single-sourcing-package-version/
-    version='1.0.0',  # Required
+    version='0.1.0',  # Required
     # This is a one-line description or tagline of what your project does. This
     # corresponds to the "Summary" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#summary
-    description='Python interface to minecraft + pynecraft bukkit plugin',  # Optional
+    description='Python interface to minecraft + pyncraft bukkit plugin',  # Optional
 
     # This is an optional longer description of your project that represents
     # the body of text which users will see when they visit PyPI.
@@ -68,7 +68,7 @@ setup(
     #
     # This field corresponds to the "Home-Page" metadata field:
     # https://packaging.python.org/specifications/core-metadata/#home-page-optional
-    url='https://github.com/jdeast/pynecraft',  # Optional
+    url='https://github.com/jdeast/pyncraft',  # Optional
 
     # This should be your name or the name of the organization which owns the
     # project.
@@ -90,10 +90,10 @@ setup(
 
         # Indicate who your project is intended for
         'Intended Audience :: Education',
-        'Topic :: Artistic Software :: Education :: Games/Entertainment :: Simulation',
+        'Topic :: Games/Entertainment',
 
         # Pick your license as you wish
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: Apache Software License',
 
         # Specify the Python versions you support here. In particular, ensure
         # that you indicate you support Python 3. These classifiers are *not*
@@ -116,8 +116,8 @@ setup(
     keywords='minecraft, plugin, scratch, java, bukkit',  # Optional
 
     # When your lightsource code is in a subdirectory under the project root, e.g.
-    # `pynecraft/`, it is necessary to specify the `package_dir` argument.
-    #package_dir={'': 'pynecraft'},  # Optional
+    # `pyncraft/`, it is necessary to specify the `package_dir` argument.
+    #package_dir={'': 'pyncraft'},  # Optional
 
     # You can just specify package directories manually here if your project is
     # simple. Or you can use find_packages().
