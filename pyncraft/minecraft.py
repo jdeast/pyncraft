@@ -241,9 +241,10 @@ class Minecraft:
             arr3d.append(curArr)
         return arr3d
 
-    def setBlock(self, x:int, y:int, z:int, block:str) -> None:
-        """Set block (x,y,z,id,[data])"""
-        self.conn.send(b"world.setBlock", x, y, z, block)
+    # DIRECTION: NORTH SOUTH EAST WEST
+    # FACE: FLOOR, CEILING, WALL
+    def setBlock(self, x:int, y:int, z:int, block:str,direction:str="WEST",face:str="WALL") -> None:
+        self.conn.send(b"world.setBlock", x, y, z, block, direction,face)
 
     def setBlocks(self, x1:int, y1:int, z1:int, x2:int, y2:int, z2:int, block) -> None: 
         """Set a cuboid of blocks (x1,y1,z1,x2,y2,z2,id,[data])"""
