@@ -3,12 +3,9 @@
 #FruitJuice Tests
 
 import pyncraft.minecraft as minecraft
-import pyncraft.minecraft as minecraftmodded
 import pyncraft.block as block
-import pyncraft.block as blockmodded
-import pyncraft.entity as entitymodded
+import pyncraft.entity as entity
 import time, math, csv, os
-import pandas as pd
 import numpy as np
 import ipdb
 
@@ -20,14 +17,16 @@ def runBlockTests(mc):
     
     A sign is placed next to the created block so user can view in Minecraft whether block created correctly or not
     Known issues:
-    - id for NETHER_REACTOR_CORE and GLOWING_OBSIDIAN wrong
     - some LEAVES missing but because they decay by the time user sees them
-    - this test doesn't try activation of TNT
     
     Author: Tim Cummings https://www.triptera.com.au/wordpress/
+    Author: Jason Eastman https://github.com/jdeast
     """
 
     # read the csv file of block ids in
+    # NOTE: many properties in this CSV file are not populated
+    # NOTE 2: other properties can be added to the CSV file
+
     # there has to be a more pythonic way to do this...
     csvfile = os.path.join("data","blocks_1.19.csv")
     blocks = {}
@@ -77,8 +76,8 @@ def runBlockTests(mc):
     mushrooms=["MUSHROOM_BROWN","MUSHROOM_RED"]
     
     # location for platform showing all block types
-    xtest = 0
-    ytest = 50
+    xtest = 100
+    ytest = 20
     ztest = 0
     mc.postToChat("runBlockTests(): Creating test blocks at x=" + str(xtest) + " y=" + str(ytest) + " z=" + str(ztest))
 
@@ -102,12 +101,27 @@ def runBlockTests(mc):
     x=xtest+10
     y=ytest
     z=ztest+10
-    for blockid in blocks['id']:
+    for i in range(len(blocks['id'])):
+        if blocks['is_liquid'][i]: continue # skip liquid blocks
+        #if not blocks['is_block'][i]: continue # skip dropped items
+        if blocks['is_broken'][i]: continue # skip broken blocks
+
+        # plants cannot be placed on stone
+        if blocks['is_plant'][i]:
+            mc.setBlock(x,y-1,z,"GRASS_BLOCK")
+
         z += 1    
         mc.setBlock(x-1,y,z,"STONE")
-        mc.setSign(x-1,y+1,z, "BIRCH_SIGN", 8, "id=" + blockid)
-        mc.setBlock(x,y,z,blockid)
-        time.sleep(0.001)
+        mc.setSign(x-1,y+1,z, "BIRCH_SIGN", 8, "id=" + blocks['id'][i])
+        mc.setBlock(x,y,z,blocks['id'][i])
+        time.sleep(0.15)
+
+
+        placed_blockid = mc.getBlock(x,y,z)
+        if placed_blockid != blocks['id'][i]: 
+            print(blocks['id'][i] + " is broken")
+        time.sleep(0.05)
+
         nblocks += 1
         # start a new row
         if (nblocks % 100) == 0: 
@@ -117,7 +131,7 @@ def runBlockTests(mc):
     mc.postToChat("runBlockTests() complete")
 
 def runEntityTests(mc):
-    """runEntityTests - tests creation of all entities known to RaspberryJuice
+    """runEntityTests - tests creation of all entities known to FruitJuice
     
     A sign is placed next to the created entity so user can view in Minecraft whether block created correctly or not
     Known issues:
@@ -129,7 +143,7 @@ def runEntityTests(mc):
     all=["EXPERIENCE_ORB","AREA_EFFECT_CLOUD","ELDER_GUARDIAN","WITHER_SKELETON","STRAY","EGG","LEASH_HITCH","PAINTING","ARROW","SNOWBALL","FIREBALL","SMALL_FIREBALL","ENDER_PEARL","ENDER_SIGNAL","THROWN_EXP_BOTTLE","ITEM_FRAME","WITHER_SKULL","PRIMED_TNT","HUSK","SPECTRAL_ARROW","SHULKER_BULLET","DRAGON_FIREBALL","ZOMBIE_VILLAGER","SKELETON_HORSE","ZOMBIE_HORSE","ARMOR_STAND","DONKEY","MULE","EVOKER_FANGS","EVOKER","VEX","VINDICATOR","ILLUSIONER","MINECART_COMMAND","BOAT","MINECART","MINECART_CHEST","MINECART_FURNACE","MINECART_TNT","MINECART_HOPPER","MINECART_MOB_SPAWNER","CREEPER","SKELETON","SPIDER","GIANT","ZOMBIE","SLIME","GHAST","PIG_ZOMBIE","ENDERMAN","CAVE_SPIDER","SILVERFISH","BLAZE","MAGMA_CUBE","ENDER_DRAGON","WITHER","BAT","WITCH","ENDERMITE","GUARDIAN","SHULKER","PIG","SHEEP","COW","CHICKEN","SQUID","WOLF","MUSHROOM_COW","SNOWMAN","OCELOT","IRON_GOLEM","HORSE","RABBIT","POLAR_BEAR","LLAMA","LLAMA_SPIT","PARROT","VILLAGER","ENDER_CRYSTAL"]
     livers=["VILLAGER","WITHER_SKELETON","EGG","ZOMBIE_VILLAGER","SKELETON_HORSE","ZOMBIE_HORSE","DONKEY","MULE",
         "WITCH","SHULKER","PIG","SHEEP","COW","WOLF","MUSHROOM_COW","CREEPER",
-        "OCELOT","IRON_GOLEM","HORSE","RABBIT","POLAR_BEAR","LLAMA","EVOKER","VINDICATOR"]
+        "OCELOT","IRON_GOLEM","HORSE","RABBIT","POLAR_BEAR","LLAMA","EVOKER","VINDICATOR","ENDERMITE"]
     items=["EXPERIENCE_ORB","AREA_EFFECT_CLOUD","ARROW","ENDER_PEARL","THROWN_EXP_BOTTLE","SPECTRAL_ARROW","SHULKER_BULLET","ARMOR_STAND","EVOKER_FANGS","VEX","BLAZE",
         "LLAMA_SPIT","ENDER_CRYSTAL"]
     minecarts=["MINECART_COMMAND","MINECART","MINECART_CHEST","MINECART_FURNACE","MINECART_TNT","MINECART_HOPPER","MINECART_MOB_SPAWNER"]
@@ -144,19 +158,20 @@ def runEntityTests(mc):
     xtest = 50
     ytest = 50
     ztest = 50
-    air=blockmodded.AIR
-    wall=blockmodded.GLASS
-    roof=blockmodded.STONE
-    floor=blockmodded.STONE
-    fence=blockmodded.FENCE
-    signmount=blockmodded.STONE
-    #sign=blockmodded.SIGN_STANDING.withData(4)
-    signid=sign.id
-    torch=blockmodded.TORCH.withData(5)
-    rail=blockmodded.RAIL
-    wallsignid=blockmodded.SIGN_WALL.id
+    wall="GLASS"
+    roof="STONE"
+    floor="STONE"
+    fence="BIRCH_FENCE"
+    signmount="STONE"
+
+    torch="TORCH"
+    rail="RAIL"
+    wallsignid="BIRCH_SIGN"
+    sign="BIRCH_SIGN"
+
+
     mc.postToChat("runEntityTests(): Creating test entities at x=" + str(xtest) + " y=" + str(ytest) + " z=" + str(ztest))
-    #mc.setBlocks(xtest,ytest-1,ztest,xtest+100,ytest+50,ztest+100,air)
+    #mc.setBlocks(xtest,ytest-1,ztest,xtest+100,ytest+50,ztest+100,"AIR")
     
     #clear the area in segments, otherwise it breaks the server
     #clearing area
@@ -164,22 +179,24 @@ def runEntityTests(mc):
         mc.setBlocks(xtest,ytest+y_inc,ztest,xtest+100,ytest+y_inc,ztest+100,"AIR")
         time.sleep(2)
 
-    mc.setBlocks(xtest,ytest-1,ztest-1,xtest+100,ytest-1,ztest+100,"STONE")
+    mc.setBlocks(xtest-10,ytest-1,ztest-11,xtest+110,ytest-1,ztest+110,"STONE")
     mc.player.setTilePos(xtest, ytest, ztest)
 
-    mc.postToChat("Dancing villager")
-    r = 10
-    x=xtest
-    y=ytest
-    z=ztest + r
-    id=mc.spawnEntity(x,y,z,entitymodded.VILLAGER)
-    theta = 0
-    while theta <= 2 * math.pi:
-        time.sleep(1)
-        theta += 0.1
-        x = xtest + math.sin(theta) * r
-        z = ztest + math.cos(theta) * r
-        mc.entity.setPos(id,x,y,z)
+    dance = False
+    if dance:
+        mc.postToChat("Dancing villager")
+        r = 10
+        x=xtest
+        y=ytest
+        z=ztest + r
+        id=mc.spawnEntity(x,y,z,entity.VILLAGER)
+        theta = 0
+        while theta <= 2 * math.pi:
+            time.sleep(0.1)
+            theta += 0.1
+            x = xtest + math.sin(theta) * r
+            z = ztest + math.cos(theta) * r
+            mc.entity.setPos(id,x,y,z)
     
 
     # create set of all block ids to ensure they all get tested
@@ -187,8 +204,8 @@ def runEntityTests(mc):
     # create a map of ids to names so can see which ones haven't been tested by name
     untested=set()
     entitymap={}
-    for varname in dir(entitymodded):
-        var=getattr(entitymodded,varname)
+    for varname in dir(entity):
+        var=getattr(entity,varname)
         try:
             # check var has data and id and add id to untested set
             if varname[0] != '_': 
@@ -212,36 +229,44 @@ def runEntityTests(mc):
         if z > 98:
             z = ztest
             x += 10
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlock(x+2,y,z,signmount)
-        mc.setSign(x+2,y+1,z,sign,key,"id=" + str(e.id))
+        mc.setSign(x+2,y+1,z,sign,4,key,"id=" + str(e.id))
         mc.spawnEntity(x,y,z,e)
         untested.discard(e.id)
+        time.sleep(0.25)
+
     for key in hangers:
         z += 3
         if z > 97:
             z = ztest
             x += 10
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlocks(x+2,y,z-1,x+2,y+2,z+1,signmount)
         mc.setSign(x+1,y,z,wallsignid,4,key,"id=" + str(e.id))
         mc.spawnEntity(x+1,y+2,z,e)
         untested.discard(e.id)
+        time.sleep(0.25)
+
     z = ztest - 4
     x += 10
     time.sleep(1)
+
     for key in livers:
         z += 4
         if z > 96:
             z = ztest
             x += 10
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlocks(x-2,y,z-2,x+2,y,z+2,fence)
-        mc.setBlocks(x-1,y,z-1,x+1,y,z+1,air)
+        mc.setBlocks(x-1,y,z-1,x+1,y,z+1,"AIR")
         mc.setBlock(x-3,y,z-1,torch)
         mc.setSign(x-3,y,z,wallsignid,4,key,"id=" + str(e.id))
         mc.spawnEntity(x,y,z,e)
         untested.discard(e.id)
+        time.sleep(0.25)
+
+
     x+=10
     z=ztest - 3
     time.sleep(1)
@@ -250,27 +275,29 @@ def runEntityTests(mc):
         if z > 97:
             z = ztest
             x += 10
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlock(x+2,y,z,signmount)
-        mc.setSign(x+2,y+1,z,sign,key,"id=" + str(e.id))
-        mc.setBlock(x+2,y,z-1,torch.id,4)
+        mc.setSign(x+2,y+1,z,sign,4,key,"id=" + str(e.id))
+        mc.setBlock(x+2,y,z-1,torch)
         mc.setBlocks(x,y,z-1,x,y,z+1,rail)
         mc.spawnEntity(x,y,z,e)
         untested.discard(e.id)
-    time.sleep(1)
+        time.sleep(0.25)
+
     for key in floats:
         z += 5
         if z > 95:
             z = ztest
             x += 10
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlock(x+2,y,z,signmount)
-        mc.setSign(x+2,y+1,z,sign,key,"id=" + str(e.id))
-        mc.setBlock(x+2,y,z-1,torch.id,2)
+        mc.setSign(x+2,y+1,z,sign,4,key,"id=" + str(e.id))
+        mc.setBlock(x+2,y,z-1,torch)
         mc.setBlocks(x-2,y-2,z-3,x+2,y-1,z+2,floor)
-        mc.setBlocks(x-1,y-1,z-2,x+1,y-1,z+1,blockmodded.WATER_STATIONARY)
+        mc.setBlocks(x-1,y-1,z-2,x+1,y-1,z+1,"WATER")
         mc.spawnEntity(x,y,z,e)
         untested.discard(e.id)
+        time.sleep(0.25)
             
     x+=10
     z=ztest - 4
@@ -280,65 +307,70 @@ def runEntityTests(mc):
         if z > 96:
             z = ztest
             x += 10
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlocks(x,y,z,x+4,y+3,z+4,wall)
         mc.setBlocks(x,y+4,z,x+4,y+4,z+4,roof)
         mc.setBlocks(x-2,y-1,z,x+6,y-1,z+4,floor)
-        mc.setBlocks(x+1,y,z+1,x+3,y+3,z+3,air)
+        mc.setBlocks(x+1,y,z+1,x+3,y+3,z+3,"AIR")
         mc.setBlock(x-1,y,z+1,torch)
-        mc.setSign(x-1,y,z+2,sign,key,"id=" + str(e.id))
+        mc.setSign(x-1,y,z+2,sign,4,key,"id=" + str(e.id))
         mc.spawnEntity(x+2,y,z+2,e)
         untested.discard(e.id)
+        time.sleep(0.25)
 
     x=xtest
     y=ytest+10
     z=ztest
     time.sleep(1)
     for key in giants:
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlocks(x,y,z,x+20,y+20,z+20,wall)
         mc.setBlocks(x,y+21,z,x+20,y+21,z+20,roof)
         mc.setBlocks(x-5,y-1,z-1,x+20,y-1,z+21,floor)
-        mc.setBlocks(x+1,y,z+1,x+19,y+20,z+19,air)
-        mc.setSign(x-1,y,z+2,sign,key,"id=" + str(e.id))
+        mc.setBlocks(x+1,y,z+1,x+19,y+20,z+19,"AIR")
+        mc.setSign(x-1,y,z+2,sign,4,key,"id=" + str(e.id))
         mc.spawnEntity(x+10,y+5,z+10,e)
         untested.discard(e.id)
+        time.sleep(0.25)
+
         z += 20
         if z > 80:
             z = ztest
             x += 25
-    time.sleep(1)
+
     for key in bosses:
-        e = getattr(entitymodded,key)
-        mc.setBlocks(x,y,z,x+20,y+20,z+20,blockmodded.BEDROCK)
-        mc.setBlocks(x,y+21,z,x+20,y+21,z+20,blockmodded.BEDROCK)
-        mc.setBlocks(x-5,y-1,z-1,x+20,y-1,z+21,blockmodded.BEDROCK)
-        mc.setBlocks(x+1,y,z+1,x+19,y+20,z+19,air)
+        e = getattr(entity,key)
+        mc.setBlocks(x,y,z,x+20,y+20,z+20,"BEDROCK")
+        mc.setBlocks(x,y+21,z,x+20,y+21,z+20,"BEDROCK")
+        mc.setBlocks(x-5,y-1,z-1,x+20,y-1,z+21,"BEDROCK")
+        mc.setBlocks(x+1,y,z+1,x+19,y+20,z+19,"AIR")
         mc.setBlocks(x+1,y,z+8,x+19,y,z+12,torch)
-        mc.setBlocks(x+1,y+10,z+2,x+1,y+15,z+18,torch.id,1)
-        mc.setBlocks(x+19,y+10,z+2,x+19,y+15,z+18,torch.id,2)
-        mc.setBlocks(x+1,y+10,z+19,x+19,y+15,z+19,torch.id,4)
-        mc.setBlocks(x+1,y+10,z+1,x+19,y+15,z+1,torch.id,3)
-        mc.setBlocks(x,y,z+9,x+3,y+3,z+11,blockmodded.BEDROCK)
+        mc.setBlocks(x+1,y+10,z+2,x+1,y+15,z+18,torch)
+        mc.setBlocks(x+19,y+10,z+2,x+19,y+15,z+18,torch)
+        mc.setBlocks(x+1,y+10,z+19,x+19,y+15,z+19,torch)
+        mc.setBlocks(x+1,y+10,z+1,x+19,y+15,z+1,torch)
+        mc.setBlocks(x,y,z+9,x+3,y+3,z+11,"BEDROCK")
         mc.setBlocks(x+4,y,z+9,x+19,y+3,z+11,wall)
-        mc.setBlocks(x,y,z+10,x+19,y+2,z+10,air)
-        mc.setSign(x-1,y,z+2,sign,key,"id=" + str(e.id))
+        mc.setBlocks(x,y,z+10,x+19,y+2,z+10,"AIR")
+        mc.setSign(x-1,y,z+2,sign,4,key,"id=" + str(e.id))
         mc.spawnEntity(x+10,y+5,z+10,e)
         untested.discard(e.id)
+        time.sleep(0.25)
         z += 20
         if z > 80:
             z = ztest
             x += 25
-    time.sleep(1)
+
     for key in sinks:
-        e = getattr(entitymodded,key)
+        e = getattr(entity,key)
         mc.setBlocks(x,y,z,x+20,y+20,z+20,wall)
         mc.setBlocks(x,y+21,z,x+20,y+21,z+20,roof)
         mc.setBlocks(x-5,y-1,z-1,x+20,y-1,z+21,floor)
-        mc.setBlocks(x+1,y,z+1,x+19,y+20,z+19,blockmodded.WATER_STATIONARY)
-        mc.setSign(x-1,y,z+2,sign,key,"id=" + str(e.id))
+        mc.setBlocks(x+1,y,z+1,x+19,y+20,z+19,"WATER")
+        mc.setSign(x-1,y,z+2,sign,4,key,"id=" + str(e.id))
         mc.spawnEntity(x+10,y,z+10,e)
         untested.discard(e.id)
+        time.sleep(0.25)
         z += 20
         if z > 80:
             z = ztest
@@ -350,6 +382,7 @@ def runEntityTests(mc):
         for varname in entitymap[id]:
             untest+=" " + varname
         mc.postToChat(untest)
+        print(untest)
     mc.postToChat("runEntityTests() completed. Use command")
     mc.postToChat("/kill @e[type=!player]")
     mc.postToChat("to remove test entities")
@@ -398,9 +431,9 @@ def runTests(mc):
     time.sleep(wait_between_tests)
 
     #getBlockWithData (no longer supported by FruitJuice)
-    blockBelow = mc.getBlockWithData(pos.x, pos.y-1, pos.z)
-    mc.postToChat("block data below is = " + str(blockBelow.data))
-    ipdb.set_trace()
+    #blockBelow = mc.getBlockWithData(pos.x, pos.y-1, pos.z)
+    #mc.postToChat("block data below is = " + str(blockBelow.data))
+    #ipdb.set_trace()
 
     #setBlock
     mc.setBlock(pos.x,pos.y+2,pos.z, "gold_block")
@@ -470,7 +503,7 @@ def runTests(mc):
 #    mc.postToChat("The last found was entity: id=" + str(entity_types[-1].id) + " name=" + entity_types[-1].name)
 #    time.sleep(wait_between_tests)
 
-    mc.spawnEntity(tilePos.x + 2, tilePos.y + 2, tilePos.x + 2, entitymodded.CREEPER)
+    mc.spawnEntity(tilePos.x + 2, tilePos.y + 2, tilePos.x + 2, entity.CREEPER)
     mc.postToChat("Creeper spawned")
     time.sleep(wait_between_tests)
 
@@ -493,12 +526,21 @@ def runTests(mc):
 # Library Tests
 mc = minecraft.Minecraft.create(address="192.168.1.239",port = 4711)
 
-runBlockTests(mc)
+
+mc.setBlock(0,-60,0,"PRISMARINE_STAIRS","EAST")
+mc.setBlock(0,-60,2,"PRISMARINE_STAIRS","WEST")
+mc.setBlock(0,-60,4,"PRISMARINE_STAIRS","NORTH")
+mc.setBlock(0,-60,6,"PRISMARINE_STAIRS","SOUTH")
+mc.setBlock(0,-60,8,"STONE")
+mc.setBlock(0,-60,10,"COMPARATOR","EAST")
+mc.setBlock(0,-60,12,"COMPARATOR","WEST")
+mc.setBlock(0,-60,14,"COMPARATOR","NORTH")
+mc.setBlock(0,-60,16,"COMPARATOR","SOUTH")
 
 ipdb.set_trace()
-#runEntityTests(mc)
 
-
+runBlockTests(mc)
+runEntityTests(mc)
 runTests(mc)
 
 mc.postToChat("ALL TESTS COMPLETE")
