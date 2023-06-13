@@ -120,7 +120,7 @@ def runBlockTests(mc):
         placed_blockid = mc.getBlock(x,y,z)
         if placed_blockid != blocks['id'][i]: 
             print(blocks['id'][i] + " is broken")
-        time.sleep(0.05)
+        time.sleep(0.01)
 
         nblocks += 1
         # start a new row
@@ -527,6 +527,10 @@ def runTests(mc):
 mc = minecraft.Minecraft.create(address="192.168.1.239",port = 4711)
 
 
+runBlockTests(mc)
+runEntityTests(mc)
+runTests(mc)
+
 mc.setBlock(0,-60,0,"PRISMARINE_STAIRS","EAST")
 mc.setBlock(0,-60,2,"PRISMARINE_STAIRS","WEST")
 mc.setBlock(0,-60,4,"PRISMARINE_STAIRS","NORTH")
@@ -537,10 +541,6 @@ mc.setBlock(0,-60,12,"COMPARATOR","WEST")
 mc.setBlock(0,-60,14,"COMPARATOR","NORTH")
 mc.setBlock(0,-60,16,"COMPARATOR","SOUTH")
 
-ipdb.set_trace()
-
-runBlockTests(mc)
-runEntityTests(mc)
-runTests(mc)
+#ipdb.set_trace()
 
 mc.postToChat("ALL TESTS COMPLETE")
