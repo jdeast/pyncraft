@@ -25,7 +25,7 @@ import ipdb
 
 # pyncraft connection
 import pyncraft.minecraft as minecraft
-mc = minecraft.Minecraft.create(address="192.168.1.239",port = 4711)
+mc = minecraft.Minecraft.create()
 
 # radius and center of the celestial sphere
 r = 100
@@ -33,8 +33,10 @@ x0 = 0
 y0 = -60
 z0 = 0
 
-try: mc.player.setTilePos(x0, y0, z0)
-except: pass
+try: 
+	mc.player.setTilePos(x0, y0, z0)
+except: 
+	pass
 
 # query the Bright Star catalog
 cat = Vizier(catalog="V/50/catalog",columns=['*', '_RAJ2000', '_DEJ2000'])
