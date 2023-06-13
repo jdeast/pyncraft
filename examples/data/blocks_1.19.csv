@@ -157,10 +157,10 @@ Chiseled Sandstone,chiseled_sandstone,64 Stackable,-,157,64,TRUE,,,,,,,,,,,TRUE,
 Cut Sandstone,cut_sandstone,64 Stackable,-,158,64,TRUE,,,,,,,,,,,TRUE,
 Cobweb,cobweb,64 Stackable,-,159,64,TRUE,,,,,,,,,,,TRUE,
 Grass,grass,64 Stackable,-,160,64,TRUE,,,,,FALSE,TRUE,,,,,TRUE,
-Fern,fern,64 Stackable,-,161,64,TRUE,,,,,,,,,,,FALSE,
-Azalea,azalea,64 Stackable,-,162,64,TRUE,,,,,,,,,,,FALSE,
-Flowering Azalea,flowering_azalea,64 Stackable,-,163,64,TRUE,,,,,,,,,,,FALSE,
-Dead Bush,dead_bush,64 Stackable,-,164,64,TRUE,,,,,,,,,,,FALSE,
+Fern,fern,64 Stackable,-,161,64,TRUE,,,,,,,,,,,TRUE,TRUE
+Azalea,azalea,64 Stackable,-,162,64,TRUE,,,,,,,,,,,TRUE,TRUE
+Flowering Azalea,flowering_azalea,64 Stackable,-,163,64,TRUE,,,,,,,,,,,TRUE,TRUE
+Dead Bush,dead_bush,64 Stackable,-,164,64,TRUE,,,,,,,,,,,TRUE,TRUE
 Seagrass,seagrass,64 Stackable,-,165,64,TRUE,,,,,,,,,TRUE,,TRUE,
 Sea Pickle,sea_pickle,64 Stackable,-,166,64,TRUE,,,,,,,,,TRUE,,TRUE,
 White Wool,white_wool,64 Stackable,-,167,64,TRUE,,,,,,,,,,,TRUE,
@@ -999,7 +999,7 @@ Bell,bell,64 Stackable,-,1097,64,TRUE,,,,,,,,,,,TRUE,
 Lantern,lantern,64 Stackable,-,1098,64,TRUE,,,,,,,,,,,TRUE,
 Soul Lantern,soul_lantern,64 Stackable,-,1099,64,TRUE,,,,,,,,,,,TRUE,
 Sweet Berries,sweet_berries,64 Stackable,-,1100,64,TRUE,,,,,FALSE,TRUE,,,,,TRUE,
-Glow Berries,glow_berries,64 Stackable,-,1101,64,TRUE,,,,,,,,,,,TRUE,
+Glow Berries,glow_berries,64 Stackable,-,1101,64,TRUE,,,,,,,,,,,TRUE,TRUE
 Campfire,campfire,64 Stackable,-,1102,64,TRUE,,,,,,,,,,,TRUE,
 Soul Campfire,soul_campfire,64 Stackable,-,1103,64,TRUE,,,,,,,,,,,TRUE,
 Shroomlight,shroomlight,64 Stackable,-,1104,64,TRUE,,,,,,,,,,,TRUE,
