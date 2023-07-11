@@ -8,6 +8,9 @@ from .util import flatten_parameters_to_bytestring
 class RequestError(Exception):
     pass
 
+class ConnectionError(Exception):
+    pass
+
 class Connection:
     """Connection to a Minecraft Pi game"""
     RequestFailed = "Fail"
@@ -24,6 +27,8 @@ class Connection:
             if not readable:
                 break
             data = self.socket.recv(1500)
+            if len(data) == 0:
+                raise ConnectionError("%s failed! Cause: connection closed" % self.lastSent.strip())
             e =  "Drained Data: <%s>\n"%data.strip()
             e += "Last Message: <%s>\n"%self.lastSent.strip()
             sys.stderr.write(e)
