@@ -1,12 +1,18 @@
+import re
+import sys
+from typing import Optional, Union
+from warnings import warn
+
+import ipdb
+from mcipc.rcon.item import Item
+
 from .connection import Connection
 from .vec3 import Vec3
 from .event import BlockEvent, ChatEvent, ArrowHitEvent
 #from .entity import Entity
 #from .block import Block
 from .util import flatten
-from warnings import warn
 from .logger import *
-import sys, ipdb
 
 """ Minecraft PI low level api v0.1_1
 
@@ -215,10 +221,85 @@ class Minecraft:
         return self.conn.sendReceive(b"world.getBlock", x, y, z)
 
     # Not supported by FruitJuice. Why not?
-    def getBlockWithData(self, x:int, y:int, z:int):
-        """Get block with data (x,y,z) => Block"""
-        ans = self.conn.sendReceive(b"world.getBlockWithData", x, y, z)
-        return Block(*list(map(int, ans.split(","))))
+    # def getBlockWithData(self, x:int, y:int, z:int):
+    #     """Get block with data (x,y,z) => Block"""
+    #     ans = self.conn.sendReceive(b"world.getBlockWithData", x, y, z)
+    #     return Block(*list(map(int, ans.split(","))))
+    
+    def getBlockWithData(
+        self, 
+        x: Union[int, Vec3], 
+        y: Optional[int] = None, 
+        z: Optional[int] = None, 
+        parse: bool=True
+    ) -> dict:
+        """
+        Return material and state (if any) of a block at the given coordinates.
+
+        Parameters
+        ----------
+        x : Union[int, Vec3]
+            Vec3 specifying the blocks coordinates, or x coordinate
+        y : Optional[int], optional
+            y coordinate, by default None; required if x is an int
+        z : Optional[int], optional
+            z coordinate, by default None; required if x is an int
+        parse : bool, optional
+            If True (default), parse the block state string into key-value pairs.
+            If False, return the string as is with key 'state'.
+
+        Returns
+        -------
+        dict
+            Dictionary with x, y, z coordinates, material, and state (if any).
+            If parse is True, the state is a dictionary of key-value pairs.
+            If parse is False, the state is a string; keys is 'state', value is ''
+            if no state info found.
+        """
+
+        if isinstance(x, Vec3):
+            pos = x
+        else:
+            pos = Vec3(x, y, z)
+
+        data = {'x': pos.x, 'y': pos.y, 'z': pos.z}
+        datastr = self.conn.sendReceive(b"world.getBlockData", pos.x, pos.y, pos.z)
+
+        if not datastr.startswith('CraftBlockData'):
+            return data
+        
+        # parse the string to get the block type, and any other attributes
+        patt = re.compile(r'^CraftBlockData{'
+            + r'(?P<type>minecraft:[a-z_]+)(?P<attrs>\[[-.,_=A-Za-z0-9]+\])?}')
+        m = patt.match(datastr)
+        if not m:
+            # should this raise an exception?
+            return data
+        
+        material = m.groups()[0]
+        try: 
+            material = Item(material).name
+        except Exception:
+            print(f'warning: unknown material: {material}')
+            material = material.replace('minecraft:', '').upper()
+
+        data.update({'material': material})
+        attrs = m.groups()[1]
+        if attrs:
+            if parse:
+                # extract the other parameters as key-value pairs
+                attrs = [tuple(a.split('=')) for a in attrs[1:-1].split(',')]
+                attrs = {k: v for k, v in attrs}
+            else:
+                # just return the string
+                attrs = {'state': attrs[1:-1]}
+            data.update(attrs)
+        elif not parse:
+            # not state was retrieved, so set state to empty string
+            data.update({'state': ''})
+            
+        return data
+    
 
     def getBlocks(self, x1:int, y1:int, z1:int, x2:int, y2:int, z2:int) -> list:
         """Get a cuboid of blocks (x0,y0,z0,x1,y1,z1) => [id:int]"""

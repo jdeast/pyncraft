@@ -104,6 +104,7 @@ setup(
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
         'Programming Language :: Python :: 3 :: Only',
     ],
 
@@ -141,7 +142,7 @@ setup(
     #
     # For an analysis of "install_requires" vs pip's requirements files see:
     # https://packaging.python.org/discussions/install-requires-vs-requirements/
-    install_requires=["ipdb","stl-to-voxel"],
+    install_requires=["ipdb","stl-to-voxel","mcipc"],
 
     # List additional groups of dependencies here (e.g. development
     # dependencies). Users will be able to install these using the "extras"
