@@ -1,10 +1,12 @@
+import os
 import re
 import sys
+from time import sleep
 from typing import Optional, Union
 from warnings import warn
 
-import ipdb
 from mcipc.rcon.item import Item
+from mcipc.rcon.je import Client as RconClient
 
 from .connection import Connection
 from .vec3 import Vec3
@@ -206,7 +208,7 @@ class Minecraft:
 
         self.camera = CmdCamera(connection)
         self.entity = CmdEntity(connection)
-        self.cmdplayer = CmdPlayer(connection,playerId)
+        self.cmdplayer = CmdPlayer(connection, playerId)
 
         # not sure why mcpi_e did this, but it doesn't work with empty playerIds
         #self.player = CmdPlayerEntity(connection,playerId)
@@ -215,6 +217,54 @@ class Minecraft:
         self.events = CmdEvents(connection)
         self.playerId = playerId
         self.settings = settings
+    
+
+    def runCommands(self, cmds: Union[list, str], pause: float = 0) -> str:
+        """
+        Run one or more commands on the Minecraft server and return the result.
+
+        This method uses the RCON protocol to send commands to the server and
+        receive the output.  All commands are executed using the same socket,
+        so it should be faster than if they were executed separately.
+
+        Parameters
+        ----------
+        cmds : Union[list, str]
+            A single command as a string, starting with the method name followed
+            by the arguments separated by spaces, or a list of such commands.
+        pause : float, optional
+            Time to pause between commands, to prevent the server from 
+            being overloaded, by default 0.
+
+        Returns
+        -------
+        str
+            Output of the commands, separated by newlines.
+        """
+
+        address = os.getenv('PYNCRAFT_ADDRESS')
+        if address == '':
+            raise Exception("PYNCRAFT_ADDRESS environment variable unset.")
+        rcon_port = os.getenv('RCON_PORT')
+        rcon_pw = os.getenv('RCON_PASSWORD')
+        if rcon_port == '' or rcon_pw == '':
+            raise Exception(
+                "RCON_PORT and RCON_PASSWORD environment variables unset.")
+        
+        if isinstance(cmds, str):
+            cmds = [cmds]
+    
+        with RconClient('localhost', int(rcon_port), passwd=rcon_pw) as client:
+
+            result = []
+            for cmd in cmds:
+                args = cmd.replace('  ', ' ').split(' ')
+                result.append(client.run(*args))
+                if pause > 0:
+                    sleep(pause)
+            
+        return result
+
 
     def getBlock(self, x:int, y:int, z:int) -> str:
         """Get block (x,y,z) => id:int"""
@@ -430,15 +480,17 @@ class Minecraft:
     def create(address = "localhost", port = 4711, playerName = ""):
         #return Minecraft(Connection(address, port))
 
-
-        log("Running Python version:"+sys.version)
+        log(f"Running Python version: {sys.version}")
         conn=Connection(address, port)
         playerId = []
         if playerName != "":
            playerId = int(conn.sendReceive(b"world.getPlayerId", playerName))
-           log("get {} playerid={}".format(playerName, playerId))
+           log(f"get {playerName} playerid={playerId}")
 
-        return Minecraft(conn,playerId)
+        os.environ['PYNCRAFT_ADDRESS'] = address
+
+        return Minecraft(conn, playerId)
+    
 
 if __name__ == "__main__":
     mc = Minecraft.create()
