@@ -219,7 +219,7 @@ class Minecraft:
         self.settings = settings
     
 
-    def runCommands(self, cmds: Union[list, str], pause: float = 0) -> str:
+    def runCommands(self, cmds: Union[list, str], pause: float = 0.0) -> str:
         """
         Run one or more commands on the Minecraft server and return the result.
 
