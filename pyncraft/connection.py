@@ -9,7 +9,7 @@ class RequestError(Exception):
     pass
 
 class Connection:
-    """Connection to a Minecraft Pi game"""
+    """Connection to a Minecraft game"""
     RequestFailed = "Fail"
 
     def __init__(self, address, port):
@@ -24,8 +24,8 @@ class Connection:
             if not readable:
                 break
             data = self.socket.recv(1500)
-            e =  "Drained Data: <%s>\n"%data.strip()
-            e += "Last Message: <%s>\n"%self.lastSent.strip()
+            e =  "Drained Data: <%s>\n"%data.strip().decode('cp437')
+            e += "Last Message: <%s>\n"%self.lastSent.strip().decode('cp437')
             sys.stderr.write(e)
 
     def send(self, f, *data):
@@ -53,7 +53,9 @@ class Connection:
         s = self.socket.makefile("r").readline().rstrip("\n")
         checkFail = s.split(",")
         if checkFail[0] == Connection.RequestFailed:
-            raise RequestError("%s failed! Cause: %s" % (self.lastSent.strip(),checkFail[-1]))
+            self.drain()
+            raise RequestError(
+                f"{self.lastSent.strip()} failed! Cause: {checkFail[-1]}")
         return s
 
     def sendReceive(self, *data):

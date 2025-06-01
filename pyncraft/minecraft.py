@@ -390,13 +390,14 @@ class Minecraft:
         ids = self.conn.sendReceive(b"world.getPlayerIds")
         return list(map(int, ids.split("|")))
 
-    def saveCheckpoint(self):
-        """Save a checkpoint that can be used for restoring the world"""
-        self.conn.send(b"world.checkpoint.save")
+    # these methods don't work in FruitJuice, so they are commented out
+    # def saveCheckpoint(self):
+    #     """Save a checkpoint that can be used for restoring the world"""
+    #     self.conn.sendReceive(b"world.checkpoint.save")
 
-    def restoreCheckpoint(self):
-        """Restore the world state to the checkpoint"""
-        self.conn.send(b"world.checkpoint.restore")
+    # def restoreCheckpoint(self):
+    #     """Restore the world state to the checkpoint"""
+    #     self.conn.sendReceive(b"world.checkpoint.restore")
 
     def postToChat(self, *msg) -> None:
         """Post a message to the game chat"""
