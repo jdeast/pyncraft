@@ -15,11 +15,40 @@ to be a home IP address it is also something you did not mean to publish.
 
 import argparse
 import os
+import sys
 
 from pyncraft.minecraft import Minecraft
 
-DEFAULT_HOST = os.environ.get("PYNCRAFT_HOST", "localhost")
-DEFAULT_PORT = int(os.environ.get("PYNCRAFT_PORT", "4711"))
+def _port_from_environment(default=4711):
+    """PYNCRAFT_PORT, or the default if it is missing or not a usable port.
+
+    Deliberately does not raise. This runs at import time, so a typo in the
+    variable would otherwise blow up with a ValueError before any example got
+    to run, and the traceback would point at this line rather than at the
+    environment variable that actually caused it.
+    """
+    raw = os.environ.get("PYNCRAFT_PORT")
+    if raw is None:
+        return default
+    try:
+        port = int(raw)
+    except ValueError:
+        print("Ignoring PYNCRAFT_PORT=%r: not a number. Using %d."
+              % (raw, default), file=sys.stderr)
+        return default
+    if not 1 <= port <= 65535:
+        print("Ignoring PYNCRAFT_PORT=%d: not a valid port. Using %d."
+              % (port, default), file=sys.stderr)
+        return default
+    return port
+
+
+# PYNCRAFT_ADDRESS is accepted as well, because it reads just as naturally and
+# is the name the RCON work in PR #3 reached for.
+DEFAULT_HOST = (os.environ.get("PYNCRAFT_HOST")
+                or os.environ.get("PYNCRAFT_ADDRESS")
+                or "localhost")
+DEFAULT_PORT = _port_from_environment()
 DEFAULT_PLAYER = os.environ.get("PYNCRAFT_PLAYER", "")
 
 
