@@ -3,3 +3,5 @@ build/
 dist/
 pyncraft.egg-info
 build.txt
+*.pyc
+__pycache__/

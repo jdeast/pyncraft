@@ -1,0 +1,170 @@
+name: Publish
+
+# pyncraft is pure Python, so one sdist plus one py3-none-any wheel covers
+# every platform -- there are no per-platform binary wheels to build.
+#
+# Triggers:
+#   push of a v* tag  -> build, verify, publish to PyPI, create a GitHub Release
+#   workflow_dispatch -> build and verify only; optionally publish to TestPyPI
+#
+# Publishing uses PyPI Trusted Publishing (OIDC), so there is no API token in
+# the repository secrets. The trust is registered on PyPI against this exact
+# combination and nothing else can use it:
+#
+#     owner/repo:    jdeast/pyncraft
+#     workflow:      publish.yml     <- this file's name; renaming it breaks
+#                                       publishing until PyPI is updated too
+#     environment:   pypi            <- must also exist in repo Settings
+#
+# SETUP, once, before the first tag:
+#   1. https://pypi.org/manage/project/pyncraft/settings/publishing/
+#      add a publisher: owner jdeast, repo pyncraft, workflow publish.yml,
+#      environment pypi
+#   2. repo Settings -> Environments -> New environment -> "pypi"
+#   3. optionally repeat both for TestPyPI with environment "testpypi"
+#
+# RELEASING:
+#   bump version in setup.py, commit, then
+#     git tag -a v0.2.2 -m "v0.2.2" -m "<release notes body>"
+#     git push origin v0.2.2
+#   The tag message body becomes the GitHub Release notes.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      testpypi:
+        description: "Also publish the build to TestPyPI (rehearsal)"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install -U pip
+          python -m pip install -U build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check the metadata
+        run: python -m twine check dist/*
+
+      # The version lives in setup.py, so a tag can disagree with what was
+      # built. A PyPI version can never be reused, so catch that here rather
+      # than after publishing something misnamed.
+      - name: Version matches the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          built=$(ls dist/*.tar.gz | sed -E 's|.*/pyncraft-(.*)\.tar\.gz|\1|')
+          echo "tag=$tag built=$built"
+          if [ "$tag" != "$built" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version '$tag' but the" \
+                 "build produced '$built'. Bump the version in setup.py to match," \
+                 "or move the tag."
+            exit 1
+          fi
+
+      # Install the built wheel into a clean interpreter and import it. This is
+      # the whole test suite for now, and it is not a formality: 0.2.1 shipped
+      # with "import ipdb" at the top of minecraft.py, so the package failed to
+      # import unless IPython happened to be installed.
+      - name: Import the built wheel
+        run: |
+          python -m venv /tmp/smoke
+          /tmp/smoke/bin/python -m pip install -q dist/*.whl
+          /tmp/smoke/bin/python -c "
+          import pyncraft
+          from pyncraft.minecraft import Minecraft
+          from pyncraft.coord import Coord, Vec3D
+          from pyncraft.vec3 import Vec3
+          assert Coord(0, 0, 0).distance(Coord(3, 4, 0)) == 5.0
+          assert Coord(0, 0, 0).cardinal_direction(Coord(0, 0, -10)) == 'north'
+          print('import and smoke checks passed')
+          "
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  # Rehearsal target. TestPyPI needs its own trusted publisher registered
+  # against this same workflow, with environment name "testpypi".
+  testpypi:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.testpypi
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/pyncraft
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyncraft
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Pushing a tag publishes to PyPI but does NOT create a GitHub Release -- that
+  # is a separate object -- so the Releases page silently falls behind the tags.
+  # Create it here from the annotated tag's own message so the two never
+  # diverge. Tags containing a/b/rc are marked as pre-releases.
+  github_release:
+    needs: [pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          # Body = the annotated tag message minus its first line (the title).
+          git tag -l "$tag" --format='%(contents)' | tail -n +2 > notes.md
+          prerelease=""
+          case "$tag" in
+            *a*|*b*|*rc*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$tag" --verify-tag --title "$tag" \
+            --notes-file notes.md $prerelease dist/*

@@ -214,11 +214,48 @@ class Minecraft:
         """Get block (x,y,z) => id:int"""
         return self.conn.sendReceive(b"world.getBlock", x, y, z)
 
-    # Not supported by FruitJuice. Why not?
-    def getBlockWithData(self, x:int, y:int, z:int):
-        """Get block with data (x,y,z) => Block"""
-        ans = self.conn.sendReceive(b"world.getBlockWithData", x, y, z)
-        return Block(*list(map(int, ans.split(","))))
+    def getBlockData(self, x, y=None, z=None, parse: bool = True) -> dict:
+        """Get a block's material and state (x,y,z) => dict
+
+        Takes either three coordinates or one Vec3/Coord. Returns a dict with
+        the coordinates, the material, and whatever state applies to that block
+        type. For an east-facing oak stair:
+
+            {"x": 0, "y": 64, "z": 0, "material": "OAK_STAIRS",
+             "facing": "east", "half": "bottom", "shape": "straight"}
+
+        With parse=False the state is left as one string under "state".
+
+        Needs FruitJuice 0.4.0 or newer; older servers reply that
+        world.getBlockData is not supported, which raises RequestError.
+        """
+        if y is None and z is None:
+            x, y, z = (x.x, x.y, x.z) if hasattr(x, "x") else tuple(x)
+
+        data = {"x": x, "y": y, "z": z}
+        raw = self.conn.sendReceive(b"world.getBlockData", x, y, z).strip()
+        if not raw:
+            return data
+
+        # The server sends BlockData.getAsString(), e.g.
+        #   minecraft:oak_stairs[facing=east,half=bottom,shape=straight]
+        # Note the commas live inside the brackets, so this cannot be split on
+        # commas the way getBlocks() is.
+        attrs = ""
+        if raw.endswith("]") and "[" in raw:
+            raw, _, rest = raw.partition("[")
+            attrs = rest[:-1]
+
+        data["material"] = raw.split(":")[-1].upper()
+
+        if parse:
+            for pair in filter(None, attrs.split(",")):
+                key, _, value = pair.partition("=")
+                data[key] = value
+        else:
+            data["state"] = attrs
+
+        return data
 
     def getBlocks(self, x1:int, y1:int, z1:int, x2:int, y2:int, z2:int) -> list:
         """Get a cuboid of blocks (x0,y0,z0,x1,y1,z1) => [id:int]"""
@@ -243,8 +280,23 @@ class Minecraft:
 
     # DIRECTION: NORTH SOUTH EAST WEST
     # FACE: FLOOR, CEILING, WALL
-    def setBlock(self, x:int, y:int, z:int, block:str,direction:str="WEST",face:str="WALL") -> None:
-        self.conn.send(b"world.setBlock", x, y, z, block, direction,face)
+    def setBlock(self, x:int, y:int, z:int, block:str,
+                 direction:str=None, face:str=None) -> None:
+        """Set a block (x,y,z,block,[direction],[face])
+
+        direction is a facing such as "NORTH"; leave it out to let minecraft
+        pick, which is almost always what you want. This used to default to
+        "WEST", which forced every stair, furnace and chest to face west.
+
+        Beds, doors and tall plants fill both of the blocks they occupy; the
+        server handles that, so only give the position of the lower or foot half.
+        """
+        args = [x, y, z, block]
+        if direction is not None:
+            args.append(direction)
+            if face is not None:
+                args.append(face)
+        self.conn.send(b"world.setBlock", *args)
 
     def setBlocks(self, x1:int, y1:int, z1:int, x2:int, y2:int, z2:int, block) -> None: 
         """Set a cuboid of blocks (x1,y1,z1,x2,y2,z2,id,[data])"""
@@ -258,14 +310,6 @@ class Minecraft:
         """Get the entity ids of the connected players => [id:int]"""
         ids = self.conn.sendReceive(b"world.getPlayerIds")
         return list(map(int, ids.split("|")))
-
-    def saveCheckpoint(self):
-        """Save a checkpoint that can be used for restoring the world"""
-        self.conn.send(b"world.checkpoint.save")
-
-    def restoreCheckpoint(self):
-        """Restore the world state to the checkpoint"""
-        self.conn.send(b"world.checkpoint.restore")
 
     def postToChat(self, *msg) -> None:
         """Post a message to the game chat"""
@@ -307,7 +351,7 @@ class Minecraft:
         signType = signType.upper()
         if signType not in minecraftSignsType: raise Exception("Sign name error")
         self.conn.send(b"world.setSign", x, y, z , signType, signDir, line1 ,line2 ,line3 ,line4)
-        
+    
     def setWallSign(self, x:int, y:int, z:int, signType:str, signDir:int, line1="",line2="",line3="",line4="") -> None:
         minecraftSignsType = ["SPRUCE_WALL_SIGN","ACACIA_WALL_SIGN","BIRCH_WALL_SIGN","DARK_OAK_WALL_SIGN","JUNGLE_WALL_SIGN","OAK_WALL_SIGN"]
         

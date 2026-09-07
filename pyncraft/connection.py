@@ -35,8 +35,8 @@ class Connection:
             data = self.socket.recv(1500)
             if len(data) == 0:
                 raise ConnectionClosed("%s failed! Cause: connection closed" % self.lastSent.strip())
-            e =  "Drained Data: <%s>\n"%data.strip()
-            e += "Last Message: <%s>\n"%self.lastSent.strip()
+            e =  "Drained Data: <%s>\n"%data.strip().decode('cp437')
+            e += "Last Message: <%s>\n"%self.lastSent.strip().decode('cp437')
             sys.stderr.write(e)
 
     def send(self, f, *data):
@@ -64,6 +64,8 @@ class Connection:
         s = self.socket.makefile("r").readline().rstrip("\n")
         checkFail = s.split(",")
         if checkFail[0] == Connection.RequestFailed:
+            # clear anything still queued, or the next call reads this failure's tail
+            self.drain()
             raise RequestError("%s failed! Cause: %s" % (self.lastSent.strip(),checkFail[-1]))
         return s
 

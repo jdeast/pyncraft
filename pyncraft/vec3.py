@@ -1,8 +1,10 @@
 class Vec3:
     def __init__(self, x=0, y=0, z=0):
-        self.x = x
-        self.y = y
-        self.z = z
+        # the wire protocol hands back strings, so coerce rather than
+        # building a Vec3 of str that fails on the first subtraction
+        self.x = float(x) if isinstance(x, str) else x
+        self.y = float(y) if isinstance(y, str) else y
+        self.z = float(z) if isinstance(z, str) else z
 
     def __add__(self, rhs):
         c = self.clone()
