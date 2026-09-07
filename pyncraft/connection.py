@@ -8,7 +8,13 @@ from .util import flatten_parameters_to_bytestring
 class RequestError(Exception):
     pass
 
-class ConnectionError(Exception):
+class ConnectionClosed(Exception):
+    """The server closed the TCP connection.
+
+    Deliberately not named ConnectionError: that has been a Python builtin
+    since 3.3, and shadowing it here would mean any except ConnectionError
+    in this module silently stops catching real socket errors.
+    """
     pass
 
 class Connection:
@@ -28,7 +34,7 @@ class Connection:
                 break
             data = self.socket.recv(1500)
             if len(data) == 0:
-                raise ConnectionError("%s failed! Cause: connection closed" % self.lastSent.strip())
+                raise ConnectionClosed("%s failed! Cause: connection closed" % self.lastSent.strip())
             e =  "Drained Data: <%s>\n"%data.strip()
             e += "Last Message: <%s>\n"%self.lastSent.strip()
             sys.stderr.write(e)
