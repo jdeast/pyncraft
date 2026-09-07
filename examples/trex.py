@@ -1,8 +1,12 @@
 from pyncraft.minecraft import Minecraft
 from pyncraft.vec3 import Vec3
-import stltovoxel
+try:
+    import stltovoxel
+except ImportError:
+    raise SystemExit(
+        "This example needs one more library. Run:\n"
+        "    pip install stl-to-voxel")
 import time, math, os, random
-import ipdb
 import numpy as np
 import datetime
 

@@ -15,7 +15,6 @@ if True:
       for i in range(len(rainbow)):
          x = pos.x + (radius - i) * math.cos(angle*math.pi/180)
          y = pos.y + (radius - i) * math.sin(angle*math.pi/180)
-         #ipdb.set_trace()
          if y > pos.y:
             mc.setBlock(x,y,pos.z,rainbow[i])
             time.sleep(0.01)

@@ -1,7 +1,11 @@
 from pyncraft.minecraft import Minecraft
-import stltovoxel
+try:
+    import stltovoxel
+except ImportError:
+    raise SystemExit(
+        "This example needs one more library. Run:\n"
+        "    pip install stl-to-voxel")
 import time
-import ipdb
 import math
 import os
 import numpy as np
@@ -26,7 +30,6 @@ if not os.path.exists(xyzfile):
 mc = Minecraft.create(address="192.168.1.239",port = 4711)
 pos = mc.player.getTilePos()
 
-#ipdb.set_trace()
 
 #pos.x = 60
 #pos.y = 62

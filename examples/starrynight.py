@@ -21,7 +21,6 @@ from astropy.coordinates import AltAz
 from astropy.coordinates import Angle
 
 import math
-import ipdb
 
 # pyncraft connection
 import pyncraft.minecraft as minecraft

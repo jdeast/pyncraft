@@ -1,5 +1,4 @@
 import pyncraft.minecraft as minecraft
-import ipdb
 
 ''' 
 This program builds the 8 fundamental logic gates from which all computing can be accomplished. 

@@ -7,7 +7,6 @@ import pyncraft.block as block
 import pyncraft.entity as entity
 import time, math, csv, os
 import numpy as np
-import ipdb
 
 wait_between_tests = 5.0
 
@@ -433,7 +432,6 @@ def runTests(mc):
     #getBlockWithData (no longer supported by FruitJuice)
     #blockBelow = mc.getBlockWithData(pos.x, pos.y-1, pos.z)
     #mc.postToChat("block data below is = " + str(blockBelow.data))
-    #ipdb.set_trace()
 
     #setBlock
     mc.setBlock(pos.x,pos.y+2,pos.z, "gold_block")
@@ -541,6 +539,5 @@ mc.setBlock(0,-60,12,"COMPARATOR","WEST")
 mc.setBlock(0,-60,14,"COMPARATOR","NORTH")
 mc.setBlock(0,-60,16,"COMPARATOR","SOUTH")
 
-#ipdb.set_trace()
 
 mc.postToChat("ALL TESTS COMPLETE")
