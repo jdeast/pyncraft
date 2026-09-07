@@ -6,7 +6,7 @@ from .event import BlockEvent, ChatEvent, ArrowHitEvent
 from .util import flatten
 from warnings import warn
 from .logger import *
-import sys, ipdb
+import sys
 
 """ Minecraft PI low level api v0.1_1
 
@@ -50,7 +50,7 @@ class CmdPositioner:
         
     def getDirection(self, ID) -> Vec3:
         """Get direction of the entity"""
-        s = self.conn.sendReceive(self.pkg + b".getDirection", id)
+        s = self.conn.sendReceive(self.pkg + b".getDirection", ID)
         return Vec3(*list(s.split(",")))
         
     def setDirection(self, ID, x:float, y:float, z:float) -> None:
@@ -123,7 +123,7 @@ class CmdPlayer(CmdPositioner):
         return self.conn.sendReceive(self.pkg + b".getFoodLevel", self.playerId)
     
     def setFoodLevel(self, foodLevel:int) -> None:
-        self.conn.send(self.pkg + b".setFoodLevel", foodLevel)
+        self.conn.send(self.pkg + b".setFoodLevel", self.playerId, foodLevel)
         
     def getHealth(self) -> float:
         return self.conn.sendReceive(self.pkg + b".getHealth", self.playerId)
@@ -132,7 +132,7 @@ class CmdPlayer(CmdPositioner):
         self.conn.send(self.pkg + b".setHealth", self.playerId, health)
     
     def sendTitle(self, title:str, subTitle:str="", fadeIn:int=10, stay:int=70, fadeOut:int=20) -> None:
-        self.conn.send(self.pkg + b".sendTitle", id, title, subTitle, fadeIn, stay, fadeOut)
+        self.conn.send(self.pkg + b".sendTitle", self.playerId, title, subTitle, fadeIn, stay, fadeOut)
  
 class CmdPlayerEntity(CmdPlayer):
     """ use entity to build a player """
