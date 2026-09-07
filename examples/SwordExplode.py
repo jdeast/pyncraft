@@ -1,3 +1,4 @@
+import connect
 # -*- coding: utf-8 -*-
 """
 Created on Tue Oct  1 21:31:06 2019
@@ -6,7 +7,7 @@ Created on Tue Oct  1 21:31:06 2019
 """
 
 from pyncraft.minecraft import Minecraft
-mc = Minecraft.create(address="192.168.1.239",port = 4721)
+mc = connect.connect_from_args("SwordExplode")[0]
 
 while True:
     # Get list of events

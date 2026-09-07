@@ -1,3 +1,4 @@
+import connect
 import pyncraft.minecraft as minecraft
 
 ''' 
@@ -9,7 +10,7 @@ It follows this youtube video:
 # https://www.youtube.com/watch?v=nfIRIInU2Vg
 '''
 
-mc = minecraft.Minecraft.create(address="192.168.1.239",port = 4711)
+mc = connect.connect_from_args("logicgates")[0]
 
 x =0
 y=-60

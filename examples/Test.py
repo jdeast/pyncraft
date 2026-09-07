@@ -1,3 +1,4 @@
+import connect
 #Martin O'Hanlon, Jason Eastman
 #www.stuffaboutcode.com
 #FruitJuice Tests
@@ -522,7 +523,7 @@ def runTests(mc):
     mc.postToChat("Tests complete")
 
 # Library Tests
-mc = minecraft.Minecraft.create(address="192.168.1.239",port = 4711)
+mc = connect.connect_from_args("Test")[0]
 
 
 runBlockTests(mc)

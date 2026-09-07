@@ -1,7 +1,8 @@
+import connect
 from pyncraft.minecraft import Minecraft
 from time import sleep
 
-mc = Minecraft.create(address="192.168.1.239",port = 4721)
+mc = connect.connect_from_args("stonepath")[0]
 
 # Constantly grab the player's position and create
 # a new stone block underneath him/her

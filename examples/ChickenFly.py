@@ -1,5 +1,6 @@
+import connect
 from pyncraft.minecraft import Minecraft
-mc = Minecraft.create(address="192.168.1.239",port = 4711)
+mc = connect.connect_from_args("ChickenFly")[0]
 
 import random, time
 

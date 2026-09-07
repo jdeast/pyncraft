@@ -1,3 +1,4 @@
+import connect
 from pyncraft.minecraft import Minecraft
 from fetch_models import ensure   # downloads the model if it is missing
 try:
@@ -28,7 +29,7 @@ if not os.path.exists(xyzfile):
    stltovoxel.convert_file(stlfile, xyzfile, resolution=resolution)
 
 # get the user's position
-mc = Minecraft.create(address="192.168.1.239",port = 4711)
+mc = connect.connect_from_args("render_gumball")[0]
 pos = mc.player.getTilePos()
 
 

@@ -1,7 +1,8 @@
+import connect
 from pyncraft.minecraft import Minecraft
 import time,random
 
-mc = Minecraft.create(address="192.168.1.239", port = 4711)
+mc = connect.connect_from_args("flower")[0]
 
 flowers=["DANDELION","POPPY","BLUE_ORCHID","ALLIUM","AZURE_BLUET","RED_TULIP","ORANGE_TULIP","WHITE_TULIP","PINK_TULIP","OXEYE_DAISY","CORNFLOWER","LILY_OF_THE_VALLEY"]
 

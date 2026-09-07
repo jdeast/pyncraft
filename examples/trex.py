@@ -1,5 +1,4 @@
-from pyncraft.minecraft import Minecraft
-from fetch_models import ensure   # downloads the model if it is missing
+import connect
 from pyncraft.vec3 import Vec3
 try:
     import stltovoxel
@@ -29,7 +28,7 @@ resolution = 200
 
 # the server can easily be overloaded with rapid-fire setBlock commands. 
 # The smaller the wait, the faster render, but the more likely it'll break the server
-wait_between_blocks = 0.05
+wait_between_blocks = 0.03
 
 # rotation of the STL file -- change these for an arbitrary rotation of the model
 theta = 0.0
@@ -39,7 +38,7 @@ phi = 0.0
 path = "data"
 
 # https://www.ameede.net/dinosaur-t-rex-h003332-file-stl-free-download-3d-model-for-cnc-and-3d-printer/
-stlfile = str(ensure("T-Rex.stl"))
+stlfile = os.path.join(path,"T-Rex.stl")
 xyzfile = os.path.splitext(stlfile)[0] + "_" + str(resolution) + '.xyz'
 
 # convert the STL file to a series of XYZ positions. 
@@ -48,13 +47,16 @@ if not os.path.exists(xyzfile):
    stltovoxel.convert_file(stlfile, xyzfile, resolution=resolution)
 
 # get the user's position
-mc = Minecraft.create(address="192.168.1.239",port = 4711)
+mc, args = connect.connect_from_args("Render a T-Rex in minecraft")
 
 try:
    pos = mc.player.getTilePos()
 except:
    pos = Vec3(0,50,0)
    print("No players found; placing at " + str(pos.x) + ',' + str(pos.y) + ',' + str(pos.z))
+
+pos = Vec3(600,0,-150)
+
 
 # read the file
 xyz = np.loadtxt(xyzfile)

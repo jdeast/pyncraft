@@ -1,7 +1,11 @@
-from pyncraft.minecraft import Minecraft
+import connect
 import time, math
 
-mc = Minecraft.create(address="192.168.1.239", port=4711, playerName='.saranova8124')
+mc, args = connect.connect_from_args("Build a rainbow")
+
+
+#print(mc.player.getTilePos())
+
 
 # block IDs of the rainbow
 rainbow = ["RED_WOOL","ORANGE_WOOL","YELLOW_WOOL","GREEN_WOOL","BLUE_WOOL","PURPLE_WOOL"]

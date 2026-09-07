@@ -1,3 +1,4 @@
+import connect
 # -*- coding: utf-8 -*-
 """
 Created on Wed Oct  2 22:32:11 2019
@@ -6,7 +7,7 @@ Created on Wed Oct  2 22:32:11 2019
 """
 
 from pyncraft.minecraft import Minecraft
-mc = Minecraft.create(address="192.168.1.239",port = 4721)
+mc = connect.connect_from_args("setSignOnPlayerPos")[0]
 
 # Get player position
 x,y,z = mc.player.getTilePos()
