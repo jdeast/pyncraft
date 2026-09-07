@@ -1,26 +1,32 @@
 name: Tests
 
-# Runs the suite on every push and pull request.
-#
-# publish.yml runs these too, so a release cannot go out over a red suite, but
-# that only fires on a tag. This is the one that tells you something broke when
-# it broke.
-#
-# The version matrix matters here: setup.py claims python_requires >=3.6, and
-# this project's own history includes a release that would not import on 3.10
-# because of a collections.abc change. If a version is claimed it should be
-# tested, or the claim should be narrowed.
-
 on:
   push:
     branches: ["**"]
   pull_request:
+  # Nightly, for the fresh-resolution job below -- it catches an upstream
+  # release breaking us, which has nothing to do with when we push.
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
+  # Callable from publish.yml so a release runs exactly this suite, rather than
+  # a copy of it that drifts out of sync.
+  workflow_call:
 
 jobs:
-  test:
+  # NOTE ON JOB NAMES -- read before renaming anything here.
+  #
+  # A matrix job does not report its own id: it reports one check per
+  # combination, named `pytest (3.11)` and so on. If a branch ruleset is ever
+  # added it should require the aggregating `test` job at the bottom, whose
+  # name stays stable however the matrix grows or shrinks.
+  pytest:
+    name: pytest
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
+      # Do not cancel the others when one fails. "3.13 broke and the rest were
+      # cancelled" tells you much less than seeing which versions passed.
       fail-fast: false
       matrix:
         python: ["3.9", "3.11", "3.13"]
@@ -33,18 +39,23 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
+      # The floor is tested, not just claimed. pyproject says >=3.9, and this
+      # project's own history includes a release that would not import on 3.10
+      # because of a collections.abc change -- claiming a version without
+      # testing it is how that ships.
       - name: Install
         run: |
           python -m pip install -U pip
           python -m pip install -e ".[test]"
 
       - name: Run the tests
-        run: python -m pytest tests/ -q
+        run: python -m pytest -q
 
       # The library must import with nothing but its declared dependency
-      # installed. 0.2.1 shipped an "import ipdb" that broke it for anyone
-      # without IPython, and no test would have caught that.
-      - name: Import with only declared dependencies
+      # present. 0.2.1 shipped an "import ipdb" that broke it for anyone
+      # without IPython, and no unit test would have caught that, because the
+      # dev environment had IPython.
+      - name: Import on a bare install
         run: |
           python -m venv /tmp/bare
           /tmp/bare/bin/python -m pip install -q .
@@ -56,3 +67,131 @@ jobs:
           from pyncraft.block import Block
           print('imports clean on a bare install')
           "
+
+  # Runs against freshly resolved dependencies, on a schedule rather than on a
+  # push.
+  #
+  # The matrix above pins nothing either -- there is no lock file -- so this is
+  # not about locked versus unlocked. It is about WHEN: a numpy release can
+  # break Coord (which subclasses ndarray, a genuinely version-sensitive thing
+  # to do) on a day nobody pushed anything, and without a scheduled run nobody
+  # finds out until the next commit or the next bug report.
+  #
+  # Deliberately NOT in the `test` gate's needs. An upstream project releasing
+  # something incompatible must not turn a required check red and block a pull
+  # request for a reason that has nothing to do with its diff.
+  pytest-latest-deps:
+    name: pytest-latest-deps
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Scoped to this job. Only this one files issues.
+    permissions:
+      contents: read
+      issues: write
+
+    # Both the open-on-failure and close-on-success steps look the tracking
+    # issue up by this exact title. Defined once so they cannot drift apart --
+    # if they did, a green run would stop closing the issue a red run opened.
+    env:
+      ISSUE_TITLE: "Nightly: suite fails against freshly resolved dependencies"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Install with a fresh resolution
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[test]"
+
+      # Saved, not just echoed: the failure report quotes it, and "which
+      # versions did it actually pick" is the first question anyone asks about
+      # a resolution failure.
+      - name: Record what actually got resolved
+        run: pip freeze | tee resolved.txt
+
+      - name: Run the tests
+        run: python -m pytest -q
+
+      # Email alone is a weak alarm here. A nightly that stays broken for a
+      # week sends seven identical emails, which is how an alarm becomes noise
+      # and then invisible. One issue, updated in place, stays visible and has
+      # a state that means something: open = still broken, closed = fixed.
+      #
+      # Uses the preinstalled gh CLI and the automatic token, so there is no
+      # marketplace action in the supply chain for this.
+      - name: Open or update the tracking issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "The nightly fresh-resolution job failed."
+            echo
+            echo "This installs straight from pyproject with no pinning, so a"
+            echo "failure here usually means an upstream release is"
+            echo "incompatible with what we declare, not that anything in this"
+            echo "repository changed. Coord subclasses numpy's ndarray, which"
+            echo "is the most likely thing to be affected."
+            echo
+            echo "Run: $RUN_URL"
+            echo
+            echo "<details><summary>Resolved versions</summary>"
+            echo
+            echo '```'
+            grep -iE '^(numpy|pytest)' resolved.txt || true
+            echo '```'
+            echo "</details>"
+          } > body.md
+
+          EXISTING=$(gh issue list --state open --search "$ISSUE_TITLE in:title" \
+                       --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file body.md
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file body.md --label bug
+          fi
+
+      # The inverse. Without it the issue only ever opens, so after a transient
+      # failure "open" stops meaning "still broken" until a human triages it.
+      # With it the state is truthful on its own: a real break keeps failing
+      # nightly and stays open; a one-night flake closes itself on the next
+      # green run. A genuine break is never masked, because this step cannot
+      # run while the suite is failing.
+      - name: Close the tracking issue when the suite is green again
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list --state open --search "$ISSUE_TITLE in:title" \
+                       --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" \
+              --comment "The nightly fresh-resolution job passed again: $RUN_URL"
+          fi
+
+  # A stable name to aggregate the matrix into one pass/fail, so a required
+  # check never has to be renamed when the matrix changes.
+  #
+  # `if: always()` is load-bearing. Without it this job is skipped when any
+  # matrix combination fails, and a skipped check reads as neutral rather than
+  # failing -- a pull request would look mergeable with a red matrix.
+  test:
+    name: test
+    if: always()
+    needs: [pytest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any required combination did not succeed
+        run: |
+          echo "pytest: ${{ needs.pytest.result }}"
+          test "${{ needs.pytest.result }}" = "success"
