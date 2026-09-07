@@ -31,7 +31,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
-          cache: pip
+          # no cache: setup-python's pip cache keys off a requirements.txt or
+          # pyproject.toml, and this project has neither -- only setup.py.
 
       - name: Install
         run: |
