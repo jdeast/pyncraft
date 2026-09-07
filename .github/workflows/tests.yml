@@ -1,0 +1,59 @@
+name: Tests
+
+# Runs the suite on every push and pull request.
+#
+# publish.yml runs these too, so a release cannot go out over a red suite, but
+# that only fires on a tag. This is the one that tells you something broke when
+# it broke.
+#
+# The version matrix matters here: setup.py claims python_requires >=3.6, and
+# this project's own history includes a release that would not import on 3.10
+# because of a collections.abc change. If a version is claimed it should be
+# tested, or the claim should be narrowed.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Run the tests
+        run: python -m pytest tests/ -q
+
+      # The library must import with nothing but its declared dependency
+      # installed. 0.2.1 shipped an "import ipdb" that broke it for anyone
+      # without IPython, and no test would have caught that.
+      - name: Import with only declared dependencies
+        run: |
+          python -m venv /tmp/bare
+          /tmp/bare/bin/python -m pip install -q .
+          /tmp/bare/bin/python -c "
+          import pyncraft
+          from pyncraft.minecraft import Minecraft
+          from pyncraft.minecraftstuff import MinecraftDrawing, MinecraftTurtle
+          from pyncraft.coord import Coord
+          from pyncraft.block import Block
+          print('imports clean on a bare install')
+          "
