@@ -5,3 +5,20 @@ pyncraft.egg-info
 build.txt
 *.pyc
 __pycache__/
+
+# 3D models for the STL examples.
+#
+# These are tens of megabytes each and git stores every version of them for
+# ever, so the repository already carries ~67 MB of them and a clone pays for
+# it. Keep new ones out.
+#
+# NOTE: this does not untrack the ones already committed -- gitignore only
+# applies to untracked files. Those need somewhere to live first (a release
+# asset, or a small fetch script beside the examples) because trex.py and
+# render_stl.py genuinely need them.
+examples/data/*.stl
+examples/data/*.STL
+
+# other large binaries that have no business in a source repository
+*.jar
+*.zip
