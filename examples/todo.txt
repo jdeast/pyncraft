@@ -1,0 +1,180 @@
+pyncraft example ideas
+======================
+
+The thing that makes starrynight.py work is a pattern, not a trick: take a real
+professional library, get coordinates out of it, and turn those into blocks. A
+kid ends up having driven the same code an astronomer uses. Everything below is
+that same shape, which is why the first entry matters more than any of them.
+
+Rough effort/payoff is one person's guess, not gospel.
+
+
+0. THE SHARED PIECE, worth building first
+-----------------------------------------
+Every idea here ends in "now put a few hundred thousand blocks in the world".
+Right now that means one setBlock per round trip, which is slow enough to be
+the limiting factor. render_stl.py already does the interesting half of this
+(voxelise, then place), and it should be pulled out of the example and into the
+library as something like:
+
+    mc.buildVoxels(array_or_points, palette)
+
+taking a numpy array or a list of (x, y, z, material), batching the writes, and
+handling the offset/scale so the build lands where the player is standing.
+
+The server side already cooperates: world.setBlocks fills a cuboid in one
+call, and pyncraft's savedBlocks path batches individual placements. Neither is
+the front door yet.
+
+Do this and every idea below is a fifty-line adapter. Skip it and each one
+re-implements the same loop, slowly.
+
+Effort: medium. Payoff: unlocks everything else.
+
+
+1. REAL TERRAIN FROM GIS DATA
+-----------------------------
+Build your own neighbourhood. "That's my school" is the most motivating thing
+on this list, and the libraries are boring and standard, which is a compliment.
+
+Ground comes from a DEM (digital elevation model) via rasterio: read the
+raster, crop to a bounding box, scale metres to blocks, and place a column per
+cell. That part is nearly trivial.
+
+Buildings do NOT come for free, and this is the thing to know up front. A DEM
+is bare earth. There are two ways to get buildings:
+
+  a. OpenStreetMap footprints, via osmnx or the Overpass API. Every building is
+     a polygon, often with building:levels or height tags. Fill the polygon,
+     extrude to the height (or 3m per level, or a default if untagged). This is
+     the practical route: it works anywhere OSM has coverage, which for a US
+     town is usually good, and gives recognisable blocky buildings.
+
+  b. Lidar, which measures the surface INCLUDING rooftops. The difference
+     between the surface model and the terrain model is, roughly, the
+     buildings and trees. Massachusetts has excellent public lidar through
+     MassGIS, and USGS 3DEP covers most of the country. More faithful, much
+     more data wrangling, and roofs come out lumpy rather than crisp.
+
+Suggested first example: Roberts Elementary, Medford MA. Ground from USGS 3DEP
+or MassGIS, buildings from OSM footprints, a few hundred metres on a side.
+Ship the extracted heightmap as a small data file so the example runs without
+network access, and put the download script next to it for anyone who wants
+their own town.
+
+Libraries: rasterio, osmnx (or plain requests against Overpass), numpy.
+Effort: medium. Payoff: highest on this list.
+
+
+2. CRYSTAL STRUCTURES
+---------------------
+Minecraft is literally a cubic lattice, so crystals map onto it better than
+onto anything else. Salt, diamond, graphite, ice come out structurally correct
+rather than approximated, and you can walk through the unit cell at a scale
+where the geometry is obvious.
+
+pymatgen or ASE will hand you fractional coordinates and lattice vectors for
+any structure; multiply out a few unit cells, map element to a wool or concrete
+colour, place. Structures come free from the Materials Project.
+
+Nice extension: the same code shows why diamond is hard and graphite is soft,
+because you can see the sheets.
+
+Libraries: pymatgen or ase, numpy.
+Effort: low. Payoff: high, and unusually well matched to the medium.
+
+
+3. MARS AND THE MOON
+--------------------
+Same machinery as (1), better subject. MOLA (Mars) and LOLA (Moon) elevation
+data are public, global, and already gridded, so there are no buildings to
+worry about and no licensing to check.
+
+Walking the actual floor of Gale Crater, at real proportions, is the kind of
+thing a ten year old remembers. Olympus Mons needs vertical exaggeration or it
+just reads as a slope.
+
+Data: NASA PDS. Libraries: rasterio (or plain numpy on the .img), astropy for
+the coordinate handling.
+Effort: low once (1) exists, since it is the same pipeline pointed at different
+data. Payoff: high.
+
+
+4. PROTEIN FOLDING
+------------------
+Biopython's Bio.PDB parses a structure file straight from RCSB and gives atom
+coordinates directly. Scale up, colour by element, place. A kid types a four
+character code and haemoglobin appears.
+
+The catch is size: a medium protein is tens of thousands of atoms, so this
+wants (0) to exist first. Backbone-only mode (alpha carbons, connected) is a
+good default, with all-atoms as an option.
+
+Libraries: biopython, numpy.
+Effort: low-medium. Payoff: high.
+
+
+5. REDSTONE FROM A HARDWARE DESCRIPTION
+---------------------------------------
+The scoped version of "build a working computer". Rather than designing a CPU
+by hand, take a real hardware description -- Amaranth is Python and pleasant,
+or a Verilog netlist via pyverilog -- and lay out the corresponding redstone
+gates automatically.
+
+"My Python program built a working adder out of redstone" is a genuine on-ramp
+to digital design, and logicgates.py is already most of the primitive gates.
+
+The full computer is a months-long rabbit hole and the connection to
+professional tooling gets thin fast. Importing a PCB layout (KiCad) is
+possible but the payoff is a flat picture of a circuit board.
+
+Libraries: amaranth or pyverilog.
+Effort: high. Payoff: high for the right kid, narrow otherwise.
+
+
+6. MUSIC
+--------
+music21 is a real musicology library out of MIT. Parse a score, build a note
+roller or a noteblock machine that plays it, or just render the melody as a
+3D bar chart you can walk along.
+
+Libraries: music21.
+Effort: medium. Payoff: high, and it reaches kids the maths route misses.
+
+
+7. MACHINE LEARNING YOU CAN WALK THROUGH
+-----------------------------------------
+Train a small decision tree on something a kid picked, then build the tree as
+an actual branching structure they walk down, each junction labelled with a
+sign. Or a small network's weights as a 3D field.
+
+Makes something abstract physical, and scikit-learn is genuinely professional.
+
+Libraries: scikit-learn.
+Effort: low. Payoff: medium-high.
+
+
+8. A REAL NOTEBOOK EXAMPLE
+--------------------------
+A Jupyter notebook is a good format for this audience: text, code and output
+in one place, and readable on GitHub without running it. mwrowe's notebook in
+PR #3 has a nice "subway system" build but needs mciwb, altair, pandas and
+RCON, so it cannot run for someone who just pip installed pyncraft.
+
+Worth writing one that needs only pyncraft and numpy. Keep the outputs in it so
+it reads on GitHub, but keep them small -- one cell in that PR was a 108KB
+rendered dataframe, about half the file.
+
+Effort: low. Payoff: high, mostly as a teaching on-ramp.
+
+
+NOTES
+-----
+- Prefer libraries with wheels everywhere. A dependency that compiles from
+  source is a wall for exactly the kid we want, on exactly the machine they
+  have. This is why pyncraft depends on numpy and nothing else.
+- Ship sample data with each example so it runs offline, with the fetch script
+  beside it for anyone who wants their own.
+- Every one of these is a "professional library -> coordinates -> blocks"
+  adapter. If a new one does not fit that shape, it probably belongs in the
+  library rather than in examples/.
