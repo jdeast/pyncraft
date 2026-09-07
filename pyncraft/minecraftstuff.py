@@ -66,7 +66,12 @@ class MinecraftDrawing:
             The block data value, defaults to ``0``.
         """
         
-        self.mc.setBlock(x,y,z,blockType,blockData)
+        # blockData is not passed on. Since the 1.13 flattening the fifth argument
+        # of setBlock is the block's FACING, so forwarding a numeric data value
+        # sent world.setBlock(x,y,z,OAK_STAIRS,0) and the server rejected it --
+        # every directional block silently failed to place. The parameter is kept
+        # so old calls still work, but it is ignored.
+        self.mc.setBlock(x, y, z, blockType)
         #print "x = " + str(x) + ", y = " + str(y) + ", z = " + str(z)
 
     def drawFace(self, vertices, filled, blockType, blockData=0):
@@ -362,6 +367,14 @@ class MinecraftDrawing:
         :param int z2:
             The z position of the second point.
         """
+        # Floor to ints first. The algorithm bitshifts the deltas, so a float
+        # raised TypeError -- and player.getPos() returns floats, so drawing a line
+        # from where the player stands was the natural call and the broken one.
+        # math.floor rather than int(): int() truncates toward zero and would put
+        # negative coordinates in the wrong block.
+        x1, y1, z1 = math.floor(x1), math.floor(y1), math.floor(z1)
+        x2, y2, z2 = math.floor(x2), math.floor(y2), math.floor(z2)
+
         # return the maximum of 2 values
         def MAX(a,b):
             if a > b: return a
@@ -523,7 +536,7 @@ class MinecraftShape:
 
         #work out the blocks which have changed and need to be re-drawn
         for blockToDraw in currentSet - drawnSet:
-            self.mc.setBlock(blockToDraw.actualPos.x, blockToDraw.actualPos.y, blockToDraw.actualPos.z, blockToDraw.blockType, blockToDraw.blockData)
+            self.mc.setBlock(blockToDraw.actualPos.x, blockToDraw.actualPos.y, blockToDraw.actualPos.z, blockToDraw.blockType)
 
         #update the blocks which have been drawn
         self.drawnShapeBlocks = self._copyBlocks(self.shapeBlocks)
@@ -538,7 +551,7 @@ class MinecraftShape:
                 self.mc.setBlock(blockToClear.actualPos.x, blockToClear.actualPos.y, blockToClear.actualPos.z, "AIR")
 
         for blockToDraw in self.shapeBlocks:
-            self.mc.setBlock(blockToDraw.actualPos.x, blockToDraw.actualPos.y, blockToDraw.actualPos.z, blockToDraw.blockType, blockToDraw.blockData)
+            self.mc.setBlock(blockToDraw.actualPos.x, blockToDraw.actualPos.y, blockToDraw.actualPos.z, blockToDraw.blockType)
 
         #update the blocks which have been drawn
         self.drawnShapeBlocks = self._copyBlocks(self.shapeBlocks)
@@ -949,7 +962,12 @@ class MinecraftTurtle:
 
     SPEEDTIMES = {0: 0, 10: 0.1, 9: 0.2, 8: 0.3, 7: 0.4, 6: 0.5, 5: 0.6, 4: 0.7, 3: 0.8, 2: 0.9, 1: 1}
 
-    def __init__(self, mc, position=minecraft.Vec3(0, 0, 0)):
+    def __init__(self, mc, position=None):
+        # position defaults to None, not Vec3(0,0,0): a mutable default is shared
+        # by every turtle created without one, so moving the first turtle moved
+        # where the next one started.
+        if position is None:
+            position = minecraft.Vec3(0, 0, 0)
         # set defaults
         self.mc = mc
         # start position
@@ -973,8 +991,8 @@ class MinecraftTurtle:
         self.mcDrawing = MinecraftDrawing(self.mc)
         # set turtle block
         self.turtleblock = "DIAMOND_BLOCK"
-        # draw turtle
-        self._drawTurtle(int(self.position.x), int(self.position.y), int(self.position.y))
+        # draw turtle (z, not y again)
+        self._drawTurtle(int(self.position.x), int(self.position.y), int(self.position.z))
 
     def forward(self, distance):
         """
@@ -1019,7 +1037,7 @@ class MinecraftTurtle:
         if self.turtlespeed == 0 and self.flying:
             # draw the line
             if self._pendown:
-                self.mcDrawing.drawLine(currentX, currentY - 1, currentZ, targetX, targetY - 1, targetZ, self._penblock.id, self._penblock.data)
+                self.mcDrawing.drawLine(currentX, currentY - 1, currentZ, targetX, targetY - 1, targetZ, self._penblock)
         else:
             blocksBetween = self.mcDrawing.getLine(currentX, currentY, currentZ, targetX, targetY, targetZ)
             for blockBetween in blocksBetween:
@@ -1032,7 +1050,7 @@ class MinecraftTurtle:
                     self._drawTurtle(blockBetween.x, blockBetween.y, blockBetween.z)
                 # draw the pen
                 if self._pendown:
-                    self.mcDrawing.drawPoint3d(blockBetween.x, blockBetween.y - 1, blockBetween.z, self._penblock.id, self._penblock.data)
+                    self.mcDrawing.drawPoint3d(blockBetween.x, blockBetween.y - 1, blockBetween.z, self._penblock)
                 # wait
                 time.sleep(self.SPEEDTIMES[self.turtlespeed])
                 # clear the turtle
@@ -1220,7 +1238,9 @@ class MinecraftTurtle:
         :param int blockData:
             The block data value, defaults to ``0``.
         """
-        self._penblock = (blockId, blockData)
+        # Store the material name. blockData has had no meaning since the 1.13
+        # flattening; a Block object is still accepted for old code.
+        self._penblock = getattr(blockId, "id", blockId)
 
     def speed(self, turtlespeed):
         """
@@ -1233,9 +1253,11 @@ class MinecraftTurtle:
         self.turtlespeed = turtlespeed
 
     def _drawTurtle(self, x, y, z):
-        # draw turtle
-        self.mcDrawing.drawPoint3d(x, y, z, self.turtleblock.id, self.turtleblock.data)
-        lastDrawnTurtle = minecraft.Vec3(x, y, z)
+        # turtleblock is a material name; .id/.data was the pre-1.13 Block API and
+        # made this raise AttributeError, which happened on the last line of
+        # __init__ and so made the whole class impossible to construct.
+        self.mcDrawing.drawPoint3d(x, y, z, self.turtleblock)
+        self.lastDrawnTurtle = minecraft.Vec3(x, y, z)
 
     def _clearTurtle(self, x, y, z):
         # clear turtle
@@ -1254,8 +1276,9 @@ class MinecraftTurtle:
         z = cz + (radius * (math.cos(math.radians(verticalAngle)) * math.sin(math.radians(horizontalAngle))))
         return x, y, z
 
-    def _roundXYZ(x, y, z):
+    def _roundXYZ(self, x, y, z):
         return int(round(x, 0)), int(round(y, 0)), int(round(z, 0))
 
-    def _roundVec3(position):
-        return minecraft.vec3(int(position.x), int(position.y), int(position.z))
+    def _roundVec3(self, position):
+        # minecraft.vec3 (lowercase) does not exist; the class is Vec3
+        return minecraft.Vec3(int(position.x), int(position.y), int(position.z))

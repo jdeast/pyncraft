@@ -23,7 +23,7 @@ class BlockEvent:
         return BlockEvent(BlockEvent.HIT, x, y, z, face, entityId)
 
 class ArrowHitEvent:
-    """An Event related to blocks (e.g. placed, removed, hit)"""
+    """An Event fired when an arrow hits a block"""
     HIT = 0
 
     def __init__(self, type, x, y, z, entityId):
@@ -36,7 +36,7 @@ class ArrowHitEvent:
             ArrowHitEvent.HIT: "ArrowHitEvent.HIT"
         }.get(self.type, "???")
 
-        return "BlockEvent(%s, %d, %d, %d, %d)"%(
+        return "ArrowHitEvent(%s, %d, %d, %d, %d)"%(
             sType,self.pos.x,self.pos.y,self.pos.z,self.entityId);
 
     @staticmethod

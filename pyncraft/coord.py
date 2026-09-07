@@ -34,7 +34,10 @@ class Coord(np.ndarray):
                 y: Union[int, float, None] = None, 
                 z: Union[int, float, None] = None
     ):
-        if isinstance(x, Iterable):
+        # str/bytes are Iterable, so without excluding them Coord("x", 2, 3)
+        # took the sequence branch and complained about the number of
+        # coordinates rather than the type.
+        if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
             x = [v for i, v in enumerate(x) if i < 4]
             if len(x) != 3:
                 raise ValueError(f"Expected 3 coordinates, got {len(x)}: {x}")

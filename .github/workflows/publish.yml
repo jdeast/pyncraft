@@ -54,7 +54,14 @@ jobs:
       - name: Install build tooling
         run: |
           python -m pip install -U pip
-          python -m pip install -U build twine
+          python -m pip install -U build twine pytest
+
+      # Gates the publish. A version on PyPI can never be reused, so a release
+      # must not be able to go out over a red suite.
+      - name: Run the tests
+        run: |
+          python -m pip install -e .
+          python -m pytest tests/ -q
 
       - name: Build sdist and wheel
         run: python -m build
@@ -78,10 +85,10 @@ jobs:
             exit 1
           fi
 
-      # Install the built wheel into a clean interpreter and import it. This is
-      # the whole test suite for now, and it is not a formality: 0.2.1 shipped
-      # with "import ipdb" at the top of minecraft.py, so the package failed to
-      # import unless IPython happened to be installed.
+      # Install the built wheel into a clean interpreter and import it. The suite
+      # above runs against the source tree; this checks the artifact itself, which
+      # is how 0.2.2 shipped without minecraftstuff.py and 0.2.1 shipped an
+      # "import ipdb" that broke the package for anyone without IPython.
       - name: Import the built wheel
         run: |
           python -m venv /tmp/smoke
@@ -91,8 +98,11 @@ jobs:
           from pyncraft.minecraft import Minecraft
           from pyncraft.coord import Coord, Vec3D
           from pyncraft.vec3 import Vec3
+          from pyncraft.block import Block
+          from pyncraft.minecraftstuff import MinecraftDrawing, MinecraftTurtle
           assert Coord(0, 0, 0).distance(Coord(3, 4, 0)) == 5.0
           assert Coord(0, 0, 0).cardinal_direction(Coord(0, 0, -10)) == 'north'
+          assert len(MinecraftDrawing(None).getLine(0.0, 0.0, 0.0, 3.0, 0.0, 0.0)) == 4
           print('import and smoke checks passed')
           "
 

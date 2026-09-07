@@ -10,14 +10,18 @@ class Block:
         self.id = id
         self.data = data
 
-    def __cmp__(self, rhs):
-        return hash(self) - hash(rhs)
+    def __lt__(self, rhs):
+        # __cmp__ has not existed since Python 2, so sorting a list of Blocks
+        # raised TypeError. Ordering by name is arbitrary but at least defined.
+        return (self.id, self.data) < (rhs.id, rhs.data)
 
     def __eq__(self, rhs):
         return self.id == rhs.id and self.data == rhs.data
 
     def __hash__(self):
-        return (self.id << 8) + self.data
+        # ids are material names now, so the old (id << 8) + data raised TypeError
+        # and made a Block unusable in a set or a dict.
+        return hash((self.id, self.data))
 
     def withData(self, data):
         return Block(self.id, data)
@@ -27,7 +31,7 @@ class Block:
         return iter((self.id, self.data))
         
     def __repr__(self):
-        return "Block(%d, %d)"%(self.id, self.data)
+        return "Block(%s, %s)" % (self.id, self.data)
 
 AIR                 = Block("AIR")
 STONE               = Block("STONE")
