@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyncraft"
+version = "0.2.3"
+description = "Control Minecraft from Python, via the FruitJuice server plugin"
+readme = "README.md"
+# No license field: setuptools already emits License-File and ships the
+# LICENSE in dist-info, and the classifier below declares it. Naming the
+# file here additionally inlines all 201 lines of Apache 2.0 into the
+# package metadata, which is what PyPI renders.
+authors = [{ name = "Jason Eastman", email = "jdeast@gmail.com" }]
+keywords = ["minecraft", "plugin", "scratch", "java", "bukkit", "education"]
+
+# 3.9 rather than the 3.6 setup.py claimed. numpy has not supported 3.8 for
+# years, so the old floor was never true, and CI tests 3.9 upward. A version
+# that is claimed should be tested, or the claim should be narrowed.
+requires-python = ">=3.9"
+
+dependencies = ["numpy"]
+
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Education",
+    "Topic :: Games/Entertainment",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+]
+
+[project.optional-dependencies]
+# Three of the examples voxelise an STL. Kept out of the base install so that
+# "pip install pyncraft" stays small and cannot fail on a machine without a
+# matching wheel; the examples themselves print this command when the import
+# fails, so nobody has to know about it in advance.
+examples = ["stl-to-voxel"]
+test = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/jdeast/pyncraft"
+Issues = "https://github.com/jdeast/pyncraft/issues"
+Plugin = "https://github.com/jdeast/FruitJuice"
+
+[tool.setuptools]
+# Explicit, so a stray directory can never be published as a package. This is
+# also the file that decides what ships: 0.2.2 shipped without minecraftstuff.py
+# because it was never committed, and packaging reads from the checkout.
+packages = ["pyncraft"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
