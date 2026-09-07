@@ -302,6 +302,68 @@ class Minecraft:
         """Set a cuboid of blocks (x1,y1,z1,x2,y2,z2,id,[data])"""
         self.conn.send(b"world.setBlocks", x1, y1, z1, x2, y2, z2, block)
 
+    def buildVoxels(self, voxels, block=None, palette=None, origin=None,
+                    chunk:int=512) -> int:
+        """Place a lot of blocks at once. Returns the number of commands sent.
+
+        This is the front door for every "real data -> blocks" example: a
+        heightmap, a voxelised STL, a crystal lattice, a protein. All of them
+        end up with a few hundred thousand coordinates, and sending one
+        setBlock each is slow enough to be the whole experience.
+
+        Instead the shape is split into maximal boxes and each box is filled
+        with one world.setBlocks. Real data is mostly large uniform regions, so
+        this usually turns hundreds of thousands of commands into thousands.
+
+        `voxels` may be:
+
+          - a 3D numpy array, where 0 is empty and any other value is a block.
+            With `block=` given, every non-zero cell is that block. With
+            `palette=` given, cell value i means palette[i - 1].
+          - an iterable of (x, y, z), all placed as `block`.
+          - an iterable of (x, y, z, material), each placed as its own material.
+
+        `origin` is where the lowest corner lands, defaulting to the player's
+        position, so a build appears where you are standing rather than at
+        0,0,0. Coordinates are relative to it.
+
+        Nothing here reads a reply: setBlock and setBlocks answer nothing, so
+        the whole build is one-way and there is no round trip per block.
+        """
+        import numpy as np
+        from . import voxel
+
+        if isinstance(voxels, np.ndarray):
+            array = voxels
+            if array.ndim != 3:
+                raise ValueError("a voxel array must be 3D (x, y, z), got %dD"
+                                 % array.ndim)
+            if palette is None:
+                # Every non-zero cell is the same block, so flatten to labels of
+                # 1 and let the single material stand in for the palette.
+                array = (array != 0).astype(np.int32)
+                pal = [None]
+            else:
+                array = array.astype(np.int32)
+                pal = list(palette)
+            offset = (0, 0, 0)
+        else:
+            array, pal, offset = voxel.to_array(voxels)
+
+        if array.size == 0:
+            return 0
+
+        if origin is None:
+            p = self.player.getTilePos()
+            origin = (p.x, p.y, p.z)
+        ox, oy, oz = (int(origin[0]) + offset[0],
+                      int(origin[1]) + offset[1],
+                      int(origin[2]) + offset[2])
+
+        messages = (self.conn.build(name, *args)
+                    for name, args in voxel.commands_for(array, pal, (ox, oy, oz), block))
+        return self.conn.sendBatch(messages, chunk=chunk)
+
     def getHeight(self, x:int, z:int) -> int:
         """Get the height of the world (x,z) => int"""
         return self.conn.sendReceive(b"world.getHeight", x, z)

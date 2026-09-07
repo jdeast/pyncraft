@@ -57,6 +57,39 @@ class Connection:
         s = b"".join([f, b"(", flatten_parameters_to_bytestring(data), b")", b"\n"])
         self._send(s)
 
+    def sendBatch(self, messages, chunk=512):
+        """Send many already-built commands with as few writes as possible.
+
+        One sendall per command is fine at human speed and hopeless at a
+        hundred thousand: the per-call overhead, not the network, is what makes
+        a large build slow. Joining them into a few big writes is most of the
+        speed-up, and it costs nothing in protocol terms because the server
+        splits on newlines anyway.
+
+        Only for commands that send no reply. Anything that answers must go
+        through sendReceive one at a time, or replies stop lining up with the
+        requests that asked for them.
+
+        `chunk` bounds how much is joined at once. Handing the socket one
+        enormous buffer just moves the wait, and a bounded chunk keeps the
+        server's queue from being flooded faster than a tick can drain it.
+        """
+        buf = []
+        count = 0
+        for m in messages:
+            buf.append(m)
+            count += 1
+            if len(buf) >= chunk:
+                self._send(b"".join(buf))
+                buf = []
+        if buf:
+            self._send(b"".join(buf))
+        return count
+
+    def build(self, f, *data):
+        """Build the bytes send() would transmit, without sending them."""
+        return b"".join([f, b"(", flatten_parameters_to_bytestring(data), b")", b"\n"])
+
     def _send(self, s):
         """
         The actual socket interaction from self.send, extracted for easier mocking
