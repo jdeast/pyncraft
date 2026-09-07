@@ -1,4 +1,5 @@
 from pyncraft.minecraft import Minecraft
+from fetch_models import ensure   # downloads the model if it is missing
 from pyncraft.vec3 import Vec3
 try:
     import stltovoxel
@@ -38,7 +39,7 @@ phi = 0.0
 path = "data"
 
 # https://www.ameede.net/dinosaur-t-rex-h003332-file-stl-free-download-3d-model-for-cnc-and-3d-printer/
-stlfile = os.path.join(path,"T-Rex.stl")
+stlfile = str(ensure("T-Rex.stl"))
 xyzfile = os.path.splitext(stlfile)[0] + "_" + str(resolution) + '.xyz'
 
 # convert the STL file to a series of XYZ positions. 

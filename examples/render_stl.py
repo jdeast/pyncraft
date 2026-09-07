@@ -1,4 +1,5 @@
 from pyncraft.minecraft import Minecraft
+from fetch_models import ensure   # downloads the model if it is missing
 try:
     import stltovoxel
 except ImportError:
@@ -37,14 +38,14 @@ phi = 0.0
 path = "data"
 
 # solidworks drawing by Blake Eastman
-stlfile = os.path.join(path,"carnival_wheel_assy.STL")
+stlfile = str(ensure("carnival_wheel_assy.STL"))
 
 # https://www.ameede.net/dinosaur-t-rex-h003332-file-stl-free-download-3d-model-for-cnc-and-3d-printer/
-stlfile = os.path.join(path,"T-Rex.stl")
+stlfile = str(ensure("T-Rex.stl"))
 
 # Space telescope
 # https://webbtelescope.org/contents/media/products/01G0MSRACZN6NDZTYHZJ44WWCY
-#stlfile = os.path.join(path,'JWST.stl')
+#stlfile = str(ensure('JWST.stl'))
 #phi = -math.pi/2.0 # rotate so sun shield is down
 
 xyzfile = os.path.splitext(stlfile)[0] + "_" + str(resolution) + '.xyz'

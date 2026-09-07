@@ -1,4 +1,5 @@
 from pyncraft.minecraft import Minecraft
+from fetch_models import ensure   # downloads the model if it is missing
 try:
     import stltovoxel
 except ImportError:
@@ -18,7 +19,7 @@ maxsize = 50.0
 resolution = 100 
 
 path = "data"
-stlfile = os.path.join(path,"gumball_machine.STL")
+stlfile = str(ensure("gumball_machine.STL"))
 xyzfile = os.path.splitext(stlfile)[0] + "_" + str(resolution) + '.xyz'
 
 # convert the STL file to a series of XYZ positions. 

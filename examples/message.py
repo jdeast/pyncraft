@@ -1,4 +1,5 @@
 from pyncraft.minecraft import Minecraft
+from fetch_models import ensure   # downloads the model if it is missing
 from pyncraft.vec3 import Vec3
 try:
     import stltovoxel
@@ -107,7 +108,7 @@ mc = Minecraft.create(address="192.168.1.239",port = 4711)
 path = "data"
 
 for element in message:
-   stlfile = os.path.join(path,"Letter_" + element.upper() + '.stl')
+   stlfile = str(ensure("Letter_" + element.upper() + '.stl'))
 
    # skip unsupported characters
    if not os.path.isfile(stlfile): 
