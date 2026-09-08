@@ -7,6 +7,7 @@ from .util import flatten
 from warnings import warn
 from .logger import *
 import sys
+import time
 
 """ Minecraft PI low level api v0.1_1
 
@@ -303,7 +304,7 @@ class Minecraft:
         self.conn.send(b"world.setBlocks", x1, y1, z1, x2, y2, z2, block)
 
     def buildVoxels(self, voxels, block=None, palette=None, origin=None,
-                    chunk:int=512) -> int:
+                    chunk:int=512, blocks_per_second:int=25000) -> int:
         """Place a lot of blocks at once. Returns the number of commands sent.
 
         This is the front door for every "real data -> blocks" example: a
@@ -329,6 +330,22 @@ class Minecraft:
 
         Nothing here reads a reply: setBlock and setBlocks answer nothing, so
         the whole build is one-way and there is no round trip per block.
+
+        `blocks_per_second` paces the send so the server can keep up. The
+        server places blocks on its main thread -- the one running the game --
+        and a build sent faster than it can absorb stalls that thread until
+        Paper's watchdog concludes it has hung and stops the server.
+
+        The default is deliberately modest, because the limit in practice is
+        not the block writes but the CHUNK LOADING they force. Building into
+        terrain the server has never generated makes the main thread block on
+        generation, and a Raspberry Pi generating several hundred fresh chunks
+        while also placing blocks is what the watchdog notices. Raise it freely
+        on better hardware, or when building somewhere already explored; pass 0
+        to send as fast as the socket allows.
+
+        Two things help more than raising it: build where the world already
+        exists, and build a big shape in pieces rather than all at once.
         """
         import numpy as np
         from . import voxel
@@ -360,9 +377,48 @@ class Minecraft:
                       int(origin[1]) + offset[1],
                       int(origin[2]) + offset[2])
 
-        messages = (self.conn.build(name, *args)
-                    for name, args in voxel.commands_for(array, pal, (ox, oy, oz), block))
-        return self.conn.sendBatch(messages, chunk=chunk)
+        # Paced by BLOCKS, not by commands.
+        #
+        # The server does this work on its main thread, the one that also runs
+        # the game. One world.setBlocks filling a 10,000-block cuboid costs it
+        # far more than one filling ten, so counting commands measures the
+        # wrong thing entirely.
+        #
+        # Sending 768,000 blocks as fast as the socket would take them -- 1.2
+        # seconds -- stalled the main thread long enough for Paper's watchdog
+        # to decide the server had hung, and it killed it. Not a hypothetical:
+        # that is how this limit came to be here.
+        #
+        # blocks_per_second=0 removes the limit, for a server that can take it.
+        budget = blocks_per_second
+        sent = 0
+        placed = 0
+        batch = []
+        started = time.time()
+
+        for name, args in voxel.commands_for(array, pal, (ox, oy, oz), block):
+            batch.append(self.conn.build(name, *args))
+            if name == b"world.setBlocks":
+                x1, y1, z1, x2, y2, z2 = args[:6]
+                placed += (abs(x2 - x1) + 1) * (abs(y2 - y1) + 1) * (abs(z2 - z1) + 1)
+            else:
+                placed += 1
+
+            if len(batch) >= chunk:
+                self.conn.sendBatch(batch, chunk=chunk)
+                sent += len(batch)
+                batch = []
+                if budget:
+                    # How far ahead of the budget we are, and wait it out.
+                    ahead = placed / float(budget) - (time.time() - started)
+                    if ahead > 0:
+                        time.sleep(ahead)
+
+        if batch:
+            self.conn.sendBatch(batch, chunk=chunk)
+            sent += len(batch)
+
+        return sent
 
     def getHeight(self, x:int, z:int) -> int:
         """Get the height of the world (x,z) => int"""
