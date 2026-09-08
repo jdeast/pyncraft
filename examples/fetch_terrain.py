@@ -49,17 +49,16 @@ import sys
 import urllib.parse
 import urllib.request
 
-try:
-    import numpy as np
-except ImportError:
-    sys.exit("This needs numpy: pip install numpy")
+import numpy as np          # a hard dependency of pyncraft itself
 
 import osm_blocks
 
-try:
-    from PIL import Image
-except ImportError:
-    sys.exit("This needs Pillow to read the elevation GeoTIFF: pip install pillow")
+# Pillow is imported where it is used, not here.
+#
+# sys.exit() at import time takes down anything that imports this module for
+# any reason -- a test that only wants short_street(), say -- and it does it as
+# SystemExit, which reads as an internal error rather than a missing package.
+# Only fetch_elevation needs Pillow, so only fetch_elevation asks for it.
 
 
 ELEVATION = ("https://elevation.nationalmap.gov/arcgis/rest/services"
@@ -218,6 +217,12 @@ def fetch_elevation(east, north, half, zone, cell=1.0, verbose=True):
             # than revealing anything, because 3DEP is natively 1 m here.
             print("             (3DEP is natively 1 m: finer cells sharpen the")
             print("              buildings and surfaces, not the ground itself)")
+    try:
+        from PIL import Image
+    except ImportError:
+        sys.exit("Reading the elevation GeoTIFF needs Pillow: pip install pillow "
+                 "(only this step needs it, and only to fetch a new place)")
+
     tif = get(ELEVATION, params, binary=True)
     ground = np.array(Image.open(io.BytesIO(tif))).astype(np.float32)
 
