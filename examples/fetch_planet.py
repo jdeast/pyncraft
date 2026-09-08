@@ -311,16 +311,16 @@ def main():
         print("  vertical exaggeration x%.1f -> relief %.0f m"
               % (args.vscale, (hi - lo) * args.vscale))
 
-    # One block per pixel horizontally, one block per metre_per_pixel vertically,
-    # so the aspect ratio is true unless --vscale says otherwise.
-    ground_blocks = ground / mpp
+    # Stored in METRES, the same as fetch_terrain.py, because build_town.py is
+    # what knows how many metres a block is and does the conversion. Dividing
+    # here as well would shrink everything by that factor twice over.
 
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, name + ".npz")
     np.savez_compressed(
         out,
-        ground=ground_blocks.astype(np.float32),
+        ground=ground.astype(np.float32),
         buildings=np.zeros(ground.shape, dtype=np.float32),
         meta=json.dumps({
             "body": args.body, "place": args.place, "what": what,
