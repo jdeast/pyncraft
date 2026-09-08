@@ -45,6 +45,7 @@ import struct
 import sys
 import urllib.error
 import urllib.request
+import warnings
 
 try:
     import numpy as np
@@ -281,6 +282,32 @@ def read_tiff_header(url):
     return info
 
 
+def downsample(grid, stride):
+    """Average stride x stride pixels into one, ignoring gaps.
+
+    Taking every nth pixel instead would be quicker and wrong: it is point
+    sampling a surface with real detail in it, so a narrow ridge either
+    survives at full height or vanishes entirely depending on where the grid
+    happens to fall. Averaging keeps the shape and quietly loses the detail,
+    which is what a coarser map is supposed to do.
+
+    A window is trimmed to a whole number of blocks first, so the last part
+    row is dropped rather than averaged against nothing.
+    """
+    stride = int(stride)
+    if stride <= 1:
+        return grid
+    rows = (grid.shape[0] // stride) * stride
+    cols = (grid.shape[1] // stride) * stride
+    block = grid[:rows, :cols].reshape(rows // stride, stride,
+                                       cols // stride, stride)
+    with warnings.catch_warnings():
+        # A block that is entirely nodata averages to nan, which is correct
+        # and which numpy would rather warn about every time.
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmean(block, axis=(1, 3))
+
+
 def read_window(url, info, row0, col0, rows, cols, wrap=True):
     """A rows x cols window, read as one contiguous range request.
 
@@ -409,7 +436,16 @@ def main():
     p.add_argument("--place", help="a named landing site or feature; --list to see them")
     p.add_argument("--lat", type=float, help="centre latitude, if not using --place")
     p.add_argument("--lon", type=float, help="centre longitude, degrees east")
-    p.add_argument("--size", type=int, default=400, help="window across, in pixels (default 400)")
+    p.add_argument("--size", type=int, default=400,
+                   help="window across, in PIXELS of the source map (default 400)")
+    p.add_argument("--rows", type=int,
+                   help="window north-south, in pixels (default: same as --size). "
+                        "The interesting axis is often only one of them")
+    p.add_argument("--stride", type=int, default=1,
+                   help="average this many pixels square into one block. A 2 m "
+                        "DEM at --stride 3 is 6 m to the block, which is how a "
+                        "window covers ground it could not afford at full "
+                        "resolution (default 1)")
     p.add_argument("--vscale", type=float, default=1.0,
                    help="vertical exaggeration; 1 is true scale (default 1)")
     p.add_argument("--name", help="output name (default: body_place)")
@@ -491,8 +527,10 @@ def main():
     if args.check:
         return
 
+    rows_wanted = args.rows or args.size
     cx, cy = pixel_for(lat, lon, info, proj)
     half = args.size // 2
+    half_rows = rows_wanted // 2
 
     # A global mosaic wraps and is huge, so a window always fits. A site DEM
     # is a few thousand pixels across and asking for the middle of a 21 km
@@ -503,38 +541,57 @@ def main():
             sys.exit("%.4f, %.4f is not inside %s (pixel %d,%d of %d x %d).\n"
                      "Use --check to see what it covers."
                      % (lat, lon, args.dem, cx, cy, info["width"], info["height"]))
-        if args.size > min(info["width"], info["height"]):
-            print("  note: --size %d is larger than the DEM (%d x %d); trimming"
-                  % (args.size, info["width"], info["height"]))
-            args.size = min(info["width"], info["height"])
+        if args.size > info["width"]:
+            print("  note: --size %d is wider than the DEM (%d); trimming"
+                  % (args.size, info["width"]))
+            args.size = info["width"]
             half = args.size // 2
+        if rows_wanted > info["height"]:
+            rows_wanted = info["height"]
+            half_rows = rows_wanted // 2
         col0 = max(0, min(cx - half, info["width"] - args.size))
     else:
         col0 = cx - half
-    row0 = max(0, min(cy - half, info["height"] - args.size))
+    row0 = max(0, min(cy - half_rows, info["height"] - rows_wanted))
 
-    span_km = args.size * mpp / 1000.0
-    mb = args.size * info["strip_bytes"][0] / 1e6
-    print("  window %d x %d pixels = %.0f x %.0f km  (about %.0f MB of range requests)"
-          % (args.size, args.size, span_km, span_km, mb))
+    span_x = args.size * mpp / 1000.0
+    span_z = rows_wanted * mpp / 1000.0
+    mb = rows_wanted * info["strip_bytes"][0] / 1e6
+    print("  window %d x %d pixels = %.2f x %.2f km  (about %.0f MB of range requests)"
+          % (args.size, rows_wanted, span_x, span_z, mb))
 
-    raw = read_window(url, info, row0, col0, args.size, args.size, wrap=dem is None)
-    ground = raw / source["units_per_metre"]
+    raw = read_window(url, info, row0, col0, rows_wanted, args.size,
+                      wrap=dem is None)
 
-    # Gaps. The global mosaics use the most negative 16-bit integer; the site
-    # DEMs say what they use in the TIFF, and one of them says "nan", which
-    # never equals itself and so has to be tested for separately.
+    # Gaps become NaN BEFORE anything averages them. The global mosaics mark
+    # nodata with the most negative 16-bit integer; the site DEMs say what
+    # they use in the TIFF, and for the NAC DTM that is -3.4e38.
+    #
+    # Averaging first is a quiet disaster: one nodata pixel in a 2x2 block
+    # drags the average to -8.5e37, which is not obviously a gap, is not
+    # caught by a later "is this the nodata value" test because it no longer
+    # equals it, and builds as a hole a hundred billion times deeper than the
+    # crater. NaN spreads harmlessly instead, and nanmean ignores it.
     nodata = info.get("nodata")
     if nodata is not None and nodata == nodata:
-        ground[raw <= nodata + abs(nodata) * 1e-6] = np.nan
-    ground[~np.isfinite(raw)] = np.nan
+        raw[raw <= nodata + abs(nodata) * 1e-6] = np.nan
+    raw[~np.isfinite(raw)] = np.nan
+
+    if args.stride > 1:
+        before = raw.shape
+        raw = downsample(raw, args.stride)
+        mpp = mpp * args.stride
+        print("  averaged %dx%d pixels per block: %s -> %s at %g m per block"
+              % (args.stride, args.stride, "x".join(map(str, before)),
+                 "x".join(map(str, raw.shape)), mpp))
+    ground = raw / source["units_per_metre"]
     gaps = int(np.isnan(ground).sum())
     if gaps:
         print("  %d of %d pixels have no data (%.1f%%)"
               % (gaps, ground.size, 100.0 * gaps / ground.size))
     lo, hi = float(np.nanmin(ground)), float(np.nanmax(ground))
-    print("  elevation %.0f to %.0f m  (relief %.0f m over %.0f km)"
-          % (lo, hi, hi - lo, span_km))
+    print("  elevation %.0f to %.0f m  (relief %.0f m over %.2f km)"
+          % (lo, hi, hi - lo, max(span_x, span_z)))
 
     if args.vscale != 1.0:
         mid = (lo + hi) / 2.0
@@ -556,6 +613,7 @@ def main():
         meta=json.dumps({
             "body": args.body, "place": args.place, "what": what,
             "lat": lat, "lon": lon, "size": args.size,
+            "rows": rows_wanted, "stride": args.stride,
             "metres_per_pixel": mpp, "vscale": args.vscale,
             "elevation_min_m": lo, "elevation_max_m": hi,
             "metres_per_cell": mpp,
