@@ -245,7 +245,7 @@ def roof_profile(mask, shape, peak):
 def to_voxels(ground, buildings, base_y, depth, hollow=True, body="earth",
               north="-Z", surface=None, materials=None, material_palette=None,
               metres_per_cell=1.0, building_ids=None, trees=None, roof_info=None,
-              prop_kinds=None):
+              prop_kinds=None, crust=None):
     """Turn two heightmaps into one labelled array ready for buildVoxels.
 
     Labels rather than materials, so the whole town is one array and one call:
@@ -337,6 +337,16 @@ def to_voxels(ground, buildings, base_y, depth, hollow=True, body="earth",
     # Ground. Columns filled from the bottom: stone, then the soil layers, with
     # SOIL[0] on top.
     #
+    # CRUST. Filling every column from the floor costs blocks in proportion to
+    # the relief, which is fine for a town on a metre of slope and ruinous for
+    # a landscape. Hadley Rille is 200 m deep; at 2 m to the block that is a
+    # hundred blocks of stone under every square of plain, and a 400 m square
+    # comes to 850,000 blocks -- more than has crashed this server before.
+    # With crust=5 the same square is 200,000 whatever the relief, because the
+    # cost stops depending on the depth of the valley. You are walking on the
+    # surface either way; the difference is only visible from underneath, and
+    # from underneath there is nothing to see.
+    #
     # The label is i + 1, not len(soil) - i. The latter reads the list
     # backwards and buries the grass: yards came out coarse dirt with the turf
     # three blocks down, and Mars had terracotta on top instead of red sand.
@@ -347,10 +357,11 @@ def to_voxels(ground, buildings, base_y, depth, hollow=True, body="earth",
         col = ground_h[x]
         for z in range(nz):
             top = col[z]
-            world[x, :top, z] = stone
+            bottom = 0 if crust is None else max(0, top - int(crust))
+            world[x, bottom:top, z] = stone
             for i, _ in enumerate(soil):
                 y = top - 1 - i
-                if y >= 0:
+                if y >= 0 and y >= bottom:
                     world[x, y, z] = i + 1
 
     # The top block of each column, where the land cover says what it is. Only
@@ -619,6 +630,11 @@ def main():
                    help="blocks of ground beneath the lowest point (default 4)")
     p.add_argument("--solid", action="store_true",
                    help="fill the buildings in rather than leaving shells")
+    p.add_argument("--crust", type=int, default=None,
+                   help="build the ground as a crust this many blocks thick "
+                        "instead of filling down to the lowest point. Costs the "
+                        "same however deep the valley, which is what makes a "
+                        "metre-scale landscape buildable at all")
     p.add_argument("--bare", action="store_true",
                    help="ignore the land cover and leave plain ground")
     p.add_argument("--house-numbers", action="store_true",
@@ -661,9 +677,14 @@ def main():
                                building_ids=None if args.bare else building_ids,
                                trees=None if args.bare else trees,
                                roof_info=None if args.bare else meta.get("roof_info"),
-                               prop_kinds=meta.get("prop_kinds"))
+                               prop_kinds=meta.get("prop_kinds"),
+                               crust=args.crust)
     blocks = int((world != 0).sum())
     print("%d blocks, %d high" % (blocks, world.shape[1]))
+    if args.crust:
+        solid = int(np.rint((ground - np.nanmin(ground)) / scale + args.depth).sum())
+        print("  crust %d blocks: %.2fM instead of %.2fM"
+              % (args.crust, blocks / 1e6, solid / 1e6))
 
     if args.dry_run:
         from pyncraft import voxel

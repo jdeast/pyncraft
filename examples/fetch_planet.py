@@ -62,6 +62,7 @@ BODIES = {
         "units_per_metre": 1.0,          # MOLA DEM is metres above the areoid
         "source": "USGS / MGS MOLA 463 m global DEM",
         "surface": "Mars",
+        "projection": {"kind": "cylindrical"},
     },
     "moon": {
         "url": "https://planetarymaps.usgs.gov/mosaic/Lunar_LRO_LOLA_Global_LDEM_118m_Mar2014.tif",
@@ -69,7 +70,68 @@ BODIES = {
         "units_per_metre": 2.0,          # LOLA LDEM is stored in half metres
         "source": "USGS / LRO LOLA 118 m global DEM",
         "surface": "Moon",
+        "projection": {"kind": "cylindrical"},
     },
+}
+
+# -- the metre-scale ones ---------------------------------------------------
+#
+# The global mosaics above cover everywhere, which is why they are coarse.
+# For the places anybody actually wants to stand there is far better, and it
+# is the same kind of file served the same way, so the reader below needs
+# almost nothing new to handle it.
+#
+#   LOLA global      118 m/pixel   the whole Moon
+#   SLDEM2015         59 m/pixel   LOLA merged with Kaguya, within 60 deg
+#   LOLA south pole  10-240 m/px   the Artemis end of the Moon
+#   LOLA site grids     5 m/pixel  ten candidate south pole landing sites
+#   LROC NAC DTM      1-2 m/pixel  stereo pairs, the Apollo sites among them
+#
+# At 118 m a Lunar Module is one sixteenth of a block and has to be built on
+# a pad beside the map with a sign apologising for the scale. At 2 m it is
+# four blocks tall and can stand where it actually stands.
+#
+# These are per-site rasters in their own map projections, not global
+# cylindrical mosaics, so each carries the projection needed to find a pixel
+# in it. Those parameters are not guessed: they are what the file's own
+# GeoTIFF keys say, and unproject() below turns the corner pixels back into
+# latitude and longitude to check they reproduce the published extent.
+SITE_DEMS = {
+    "apollo15": {
+        "body": "moon",
+        "url": "https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/"
+               "LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO15/NAC_DTM_APOLLO15.TIF",
+        "metres_per_pixel": 2.0,
+        "units_per_metre": 1.0,
+        "lat": 26.132, "lon": 3.634,
+        "what": "Apollo 15, Hadley Rille -- LROC NAC stereo DTM",
+        "source": "LROC / NAC_DTM_APOLLO15, 2 m per pixel",
+        "extent": (25.59, 26.54, 3.50, 3.69),
+        "projection": {"kind": "equirectangular", "radius_m": 1737400.0,
+                       "centre_lon": 180.0, "standard_parallel": 26.0},
+    },
+    "malapert": {
+        "body": "moon",
+        "url": "https://pgda.gsfc.nasa.gov/data/LOLA_5mpp/Site23/"
+               "Site23_final_adj_5mpp_surf.tif",
+        "metres_per_pixel": 5.0,
+        "units_per_metre": 1.0,
+        "lat": -85.964, "lon": 357.681,
+        "what": "Malapert Massif -- Artemis candidate site 23, LOLA 5 m",
+        "source": "NASA PGDA / LOLA 5 m south pole site grid (Barker+ 2021)",
+        "extent": None,
+        "projection": {"kind": "polar_stereographic", "radius_m": 1737400.0,
+                       "centre_lon": 0.0, "scale_factor": 1.0, "south": True},
+    },
+}
+
+# The other nine 5 m/pixel south pole grids, on the same server under the same
+# naming. Adding one is a line in SITE_DEMS above, which is the exercise.
+OTHER_5M_SITES = {
+    "Site01": "Connecting ridge", "Site04": "Shackleton rim",
+    "Site06": "Nobile rim 1", "Site07": "Peak near Shackleton",
+    "Site11": "de Gerlache rim", "Site20": "Leibnitz beta plateau",
+    "Haworth": "Haworth", "Shoemaker": "Shoemaker", "DM2": "Nobile rim 2",
 }
 
 # Somewhere to start, so nobody has to look up coordinates to try it.
@@ -193,12 +255,33 @@ def read_tiff_header(url):
                          % info["compression"])
     if info["rows_per_strip"] != 1:
         raise ValueError("this expects one strip per row (got %d)" % info["rows_per_strip"])
-    if info["bits"] != 16:
-        raise ValueError("this expects 16-bit samples (got %d)" % info["bits"])
+    # 16-bit signed integers for the global mosaics, 32-bit floats for the
+    # site DEMs. Both are fixed width and uncompressed, so the arithmetic that
+    # finds a row is unchanged; only the dtype differs.
+    if info["bits"] == 16 and info["sample_format"] in (1, 2):
+        info["sample_dtype"] = "i2"
+        info["nodata"] = -32767.0
+    elif info["bits"] == 32 and info["sample_format"] == 3:
+        info["sample_dtype"] = "f4"
+        info["nodata"] = None
+    else:
+        raise ValueError("this reads 16-bit integer or 32-bit float samples, "
+                         "not %d-bit format %d" % (info["bits"], info["sample_format"]))
+
+    # GDAL writes the nodata value as an ASCII string in tag 42113. Both site
+    # DEMs have one -- a huge negative number for the NAC DTM, a literal "nan"
+    # for the LOLA grid -- and without it the gaps in coverage build as a floor
+    # at minus 3e38, which is not a subtle wrongness but is an avoidable one.
+    if 42113 in tags:
+        try:
+            info["nodata"] = float(
+                bytes(tags[42113]).decode("ascii", "replace").strip("\x00 \t"))
+        except (TypeError, ValueError):
+            pass
     return info
 
 
-def read_window(url, info, row0, col0, rows, cols):
+def read_window(url, info, row0, col0, rows, cols, wrap=True):
     """A rows x cols window, read as one contiguous range request.
 
     Rows are contiguous in the file, so the whole block is one range. That
@@ -214,16 +297,96 @@ def read_window(url, info, row0, col0, rows, cols):
     end = info["strip_offsets"][row0 + rows - 1] + row_bytes - 1
     raw = _get(url, start, end)
 
-    dtype = np.dtype(("<i2" if bo == "<" else ">i2"))
+    dtype = np.dtype(bo + info["sample_dtype"])
     block = np.frombuffer(raw, dtype=dtype, count=rows * width).reshape(rows, width)
-    # Wrap in longitude, so a window across the antimeridian still works.
-    idx = (np.arange(col0, col0 + cols) % width)
+    if wrap:
+        # A global mosaic joins up, so a window across the antimeridian works.
+        idx = np.arange(col0, col0 + cols) % width
+    else:
+        # A site raster does not. Running off the edge should hold the edge
+        # rather than reappear on the far side of the image.
+        idx = np.clip(np.arange(col0, col0 + cols), 0, width - 1)
     return block[:, idx].astype(np.float32)
 
 
 # ── geography ──────────────────────────────────────────────────────────────
 
-def pixel_for(lat, lon, info):
+def _project(lat, lon, info, proj):
+    """Latitude and longitude to the raster's own projected metres."""
+    kind = proj["kind"]
+
+    if kind == "cylindrical":
+        # A global mosaic: use the image's own extent rather than a formula,
+        # because the tie point is the only thing that says where zero is.
+        lon = ((lon + 180.0) % 360.0) - 180.0
+        x_span = info["x_max"] - info["x_min"]
+        y_span = info["y_max"] - info["y_min"]
+        return ((lon + 180.0) / 360.0 * x_span + info["x_min"],
+                info["y_max"] - (90.0 - lat) / 180.0 * y_span)
+
+    R = proj["radius_m"]
+    dlon = ((lon - proj.get("centre_lon", 0.0) + 180.0) % 360.0) - 180.0
+
+    if kind == "equirectangular":
+        # Spherical, with the parallel of true scale the file names.
+        return (R * math.radians(dlon)
+                * math.cos(math.radians(proj.get("standard_parallel", 0.0))),
+                R * math.radians(lat))
+
+    if kind == "polar_stereographic":
+        k0 = proj.get("scale_factor", 1.0)
+        a = math.radians(dlon)
+        if proj.get("south"):
+            rho = 2.0 * R * k0 * math.tan(math.pi / 4.0 + math.radians(lat) / 2.0)
+            return rho * math.sin(a), rho * math.cos(a)
+        rho = 2.0 * R * k0 * math.tan(math.pi / 4.0 - math.radians(lat) / 2.0)
+        return rho * math.sin(a), -rho * math.cos(a)
+
+    raise ValueError("unknown projection %r" % kind)
+
+
+def unproject(col, row, info, proj):
+    """The other way round, which is what checks the projection is right.
+
+    Nothing is built with this -- it is the test. If turning pixel 0,0 back
+    into a latitude and longitude does not reproduce the extent the product
+    publishes, the forward projection is wrong, and the landscape would come
+    out somewhere else entirely while still looking perfectly plausible.
+    """
+    x = info["x_min"] + col * info["x_scale"]
+    y = info["y_max"] - row * info["y_scale"]
+    kind = proj["kind"]
+
+    if kind == "cylindrical":
+        x_span = info["x_max"] - info["x_min"]
+        y_span = info["y_max"] - info["y_min"]
+        return (90.0 - (info["y_max"] - y) / y_span * 180.0,
+                (x - info["x_min"]) / x_span * 360.0 - 180.0)
+
+    R = proj["radius_m"]
+    lon0 = proj.get("centre_lon", 0.0)
+
+    if kind == "equirectangular":
+        lat = math.degrees(y / R)
+        lon = lon0 + math.degrees(x / (R * math.cos(
+            math.radians(proj.get("standard_parallel", 0.0)))))
+        return lat, ((lon + 180.0) % 360.0) - 180.0
+
+    if kind == "polar_stereographic":
+        k0 = proj.get("scale_factor", 1.0)
+        c = 2.0 * math.atan(math.hypot(x, y) / (2.0 * R * k0))
+        if proj.get("south"):
+            lat = math.degrees(c - math.pi / 2.0)
+            lon = lon0 + math.degrees(math.atan2(x, y))
+        else:
+            lat = math.degrees(math.pi / 2.0 - c)
+            lon = lon0 + math.degrees(math.atan2(x, -y))
+        return lat, ((lon + 180.0) % 360.0) - 180.0
+
+    raise ValueError("unknown projection %r" % kind)
+
+
+def pixel_for(lat, lon, info, proj=None):
     """Which pixel a latitude and longitude fall on, from the file's own extent.
 
     Both mosaics are simple cylindrical in projected metres and run -180..180,
@@ -231,14 +394,7 @@ def pixel_for(lat, lon, info):
     is not loud: 137.8 East read as though the image started at 0 lands a third
     of the way round the planet, on terrain that looks perfectly reasonable.
     """
-    # Longitude east, folded to the range the image actually covers.
-    lon = ((lon + 180.0) % 360.0) - 180.0
-
-    x_span = info["x_max"] - info["x_min"]
-    y_span = info["y_max"] - info["y_min"]
-    x = (lon + 180.0) / 360.0 * x_span + info["x_min"]
-    y = info["y_max"] - (90.0 - lat) / 180.0 * y_span
-
+    x, y = _project(lat, lon, info, proj or {"kind": "cylindrical"})
     col = int(round((x - info["x_min"]) / info["x_scale"]))
     row = int(round((info["y_max"] - y) / info["y_scale"]))
     return col, row
@@ -257,7 +413,12 @@ def main():
     p.add_argument("--vscale", type=float, default=1.0,
                    help="vertical exaggeration; 1 is true scale (default 1)")
     p.add_argument("--name", help="output name (default: body_place)")
+    p.add_argument("--dem", choices=sorted(SITE_DEMS),
+                   help="use a metre-scale site DEM instead of the global mosaic")
     p.add_argument("--list", action="store_true", help="list the named places and stop")
+    p.add_argument("--check", action="store_true",
+                   help="project the corners back to lat/lon and stop, to prove "
+                        "the DEM is being read where it actually is")
     args = p.parse_args()
 
     if args.list:
@@ -265,10 +426,30 @@ def main():
             print(body + ":")
             for name, (lat, lon, what) in sorted(PLACES[body].items()):
                 print("  %-14s %7.2f, %7.2f   %s" % (name, lat, lon, what))
+        print()
+        print("metre-scale site DEMs (--dem), far better than the global mosaic:")
+        for name, d in sorted(SITE_DEMS.items()):
+            print("  %-14s %7.2f, %7.2f   %g m/pixel  %s"
+                  % (name, d["lat"], d["lon"], d["metres_per_pixel"], d["what"]))
+        print()
+        print("Nine more LOLA 5 m south pole grids exist and are not wired up yet:")
+        for key, what in sorted(OTHER_5M_SITES.items()):
+            print("    %-10s %s" % (key, what))
+        print("  They are at https://pgda.gsfc.nasa.gov/data/LOLA_5mpp/<name>/")
+        print("  named <name>_final_adj_5mpp_surf.tif, same projection as")
+        print("  malapert above. Adding one is a line in SITE_DEMS.")
         return
 
+    # A site DEM overrides the body: it is a different file, in its own
+    # projection, and it decides which body we are on.
+    dem = None
+    if args.dem:
+        dem = SITE_DEMS[args.dem]
+        args.body = dem["body"]
     body = BODIES[args.body]
-    if args.place:
+    if dem and not args.place and args.lat is None:
+        lat, lon, what = dem["lat"], dem["lon"], dem["what"]
+    elif args.place:
         if args.place not in PLACES[args.body]:
             sys.exit("No place called %r on %s. Try --list." % (args.place, args.body))
         lat, lon, what = PLACES[args.body][args.place]
@@ -277,30 +458,80 @@ def main():
     else:
         sys.exit("Give --place, or both --lat and --lon. --list shows the places.")
 
-    name = args.name or ("%s_%s" % (args.body, args.place or "custom"))
-    mpp = body["metres_per_pixel"]
+    source = dem or body
+    name = args.name or ("%s_%s" % (args.body, args.dem or args.place or "custom"))
+    mpp = source["metres_per_pixel"]
+    proj = source.get("projection", {"kind": "cylindrical"})
+    url = source["url"]
 
     print("%s: %s" % (body["surface"], what))
-    print("  reading the header of a %s global DEM" % body["surface"])
-    info = read_tiff_header(body["url"])
-    print("  %d x %d, %d-bit, %.0f m per pixel"
-          % (info["width"], info["height"], info["bits"], mpp))
+    print("  reading the header of %s"
+          % (("the %s global DEM" % body["surface"]) if not dem else source["source"]))
+    info = read_tiff_header(url)
+    print("  %d x %d, %d-bit %s, %g m per pixel"
+          % (info["width"], info["height"], info["bits"],
+             "float" if info["sample_dtype"] == "f4" else "integer", mpp))
 
-    cx, cy = pixel_for(lat, lon, info)
+    # Prove the projection before reading a single pixel of data. Turning the
+    # corners back into latitude and longitude costs nothing and catches the
+    # one error that never announces itself -- reading the right file in the
+    # wrong place, which still produces a perfectly convincing landscape.
+    if dem or args.check:
+        (n_lat, w_lon) = unproject(0, 0, info, proj)
+        (s_lat, e_lon) = unproject(info["width"] - 1, info["height"] - 1, info, proj)
+        print("  covers  lat %.4f to %.4f,  lon %.4f to %.4f"
+              % (min(n_lat, s_lat), max(n_lat, s_lat),
+                 min(w_lon, e_lon), max(w_lon, e_lon)))
+        if dem and dem.get("extent"):
+            lo_la, hi_la, lo_lo, hi_lo = dem["extent"]
+            print("  published %.2f to %.2f,  %.2f to %.2f  (should match above)"
+                  % (lo_la, hi_la, lo_lo, hi_lo))
+        print("  %.2f x %.2f km at %g m per pixel"
+              % (info["width"] * mpp / 1000.0, info["height"] * mpp / 1000.0, mpp))
+    if args.check:
+        return
+
+    cx, cy = pixel_for(lat, lon, info, proj)
     half = args.size // 2
+
+    # A global mosaic wraps and is huge, so a window always fits. A site DEM
+    # is a few thousand pixels across and asking for the middle of a 21 km
+    # square is easy to get wrong, so say so rather than silently clamping to
+    # a corner and building the wrong hillside.
+    if dem:
+        if not (0 <= cx < info["width"] and 0 <= cy < info["height"]):
+            sys.exit("%.4f, %.4f is not inside %s (pixel %d,%d of %d x %d).\n"
+                     "Use --check to see what it covers."
+                     % (lat, lon, args.dem, cx, cy, info["width"], info["height"]))
+        if args.size > min(info["width"], info["height"]):
+            print("  note: --size %d is larger than the DEM (%d x %d); trimming"
+                  % (args.size, info["width"], info["height"]))
+            args.size = min(info["width"], info["height"])
+            half = args.size // 2
+        col0 = max(0, min(cx - half, info["width"] - args.size))
+    else:
+        col0 = cx - half
     row0 = max(0, min(cy - half, info["height"] - args.size))
-    col0 = cx - half
 
     span_km = args.size * mpp / 1000.0
     mb = args.size * info["strip_bytes"][0] / 1e6
     print("  window %d x %d pixels = %.0f x %.0f km  (about %.0f MB of range requests)"
           % (args.size, args.size, span_km, span_km, mb))
 
-    raw = read_window(body["url"], info, row0, col0, args.size, args.size)
-    ground = raw / body["units_per_metre"]
+    raw = read_window(url, info, row0, col0, args.size, args.size, wrap=dem is None)
+    ground = raw / source["units_per_metre"]
 
-    # The nodata value in both products is the most negative 16-bit integer.
-    ground[raw <= -32768 + 1] = np.nan
+    # Gaps. The global mosaics use the most negative 16-bit integer; the site
+    # DEMs say what they use in the TIFF, and one of them says "nan", which
+    # never equals itself and so has to be tested for separately.
+    nodata = info.get("nodata")
+    if nodata is not None and nodata == nodata:
+        ground[raw <= nodata + abs(nodata) * 1e-6] = np.nan
+    ground[~np.isfinite(raw)] = np.nan
+    gaps = int(np.isnan(ground).sum())
+    if gaps:
+        print("  %d of %d pixels have no data (%.1f%%)"
+              % (gaps, ground.size, 100.0 * gaps / ground.size))
     lo, hi = float(np.nanmin(ground)), float(np.nanmax(ground))
     print("  elevation %.0f to %.0f m  (relief %.0f m over %.0f km)"
           % (lo, hi, hi - lo, span_km))
@@ -328,7 +559,8 @@ def main():
             "metres_per_pixel": mpp, "vscale": args.vscale,
             "elevation_min_m": lo, "elevation_max_m": hi,
             "metres_per_cell": mpp,
-            "source_ground": body["source"],
+            "dem": args.dem,
+            "source_ground": source["source"],
         }),
     )
     print("wrote %s (%.0f KB)" % (out, os.path.getsize(out) / 1024.0))
