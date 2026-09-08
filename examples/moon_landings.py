@@ -111,12 +111,9 @@ def build_apollo_lm(scale=0.5):
 
     # Four landing legs, out and down, with a round footpad on the end.
     for sx, sz in ((1, 1), (1, -1), (-1, 1), (-1, -1)):
-        steps = max(leg_span - desc_r, 1)
-        for i in range(steps + 1):
-            t = i / steps
-            x = int(round(sx * (desc_r + (leg_span - desc_r) * t)))
-            z = int(round(sz * (desc_r + (leg_span - desc_r) * t)))
-            y = int(round(desc_h * 0.55 * (1 - t)))
+        top = (sx * desc_r, int(round(desc_h * 0.55)), sz * desc_r)
+        foot = (sx * leg_span, 0, sz * leg_span)
+        for x, y, z in connected(top, foot):
             out.append((x, y, z, "IRON_BARS"))
         px, pz = sx * leg_span, sz * leg_span
         for dx in (-1, 0, 1):
@@ -150,6 +147,27 @@ def build_apollo_lm(scale=0.5):
         out.append((0, y, -desc_r - 1, "LADDER"))
     out.append((0, 1, -desc_r - 2, "OAK_SIGN"))
     return out
+
+
+def connected(a, b):
+    """Every point from a to b, each sharing a FACE with the one before it.
+
+    Sweeping a parametric line and rounding gives points that step diagonally,
+    and two blocks meeting only at an edge are not neighbours as far as
+    Minecraft is concerned. Iron bars work out what to join onto by looking at
+    their four side faces, so a landing leg drawn that way came out as a row
+    of loose rods hanging in the air with daylight between them.
+
+    Moving one axis at a time -- the one with furthest still to go -- costs a
+    few more blocks and makes the leg look like a leg.
+    """
+    cur = list(a)
+    pts = [tuple(cur)]
+    while tuple(cur) != tuple(b):
+        far = max(range(3), key=lambda i: abs(b[i] - cur[i]))
+        cur[far] += 1 if b[far] > cur[far] else -1
+        pts.append(tuple(cur))
+    return pts
 
 
 def build_lrv(scale=0.5):

@@ -194,6 +194,28 @@ class CmdEvents:
         return [ChatEvent.Post(int(e[:e.find(",")]), e[e.find(",") + 1:]) for e in events]
 
 
+def reshape_blocks(names, xs, ys, zs):
+    """The server's flat block list into [y][x][z], which is the order it uses.
+
+    Kept out of the Minecraft class so it can be tested without a server: the
+    whole bug was in the arithmetic, and the arithmetic needs no socket.
+    """
+    if len(names) != xs * ys * zs:
+        # `warn` here is this package's logger, not warnings.warn: the
+        # `from .logger import *` above shadows it. That is worth knowing
+        # before writing a test that waits for a warning which never arrives.
+        warn("getBlocks: expected %d blocks, got %d" % (xs * ys * zs, len(names)))
+    out, k = [], 0
+    for _ in range(ys):
+        slab = []
+        for _ in range(xs):
+            slab.append(names[k:k + zs])
+            k += zs
+        out.append(slab)
+    return out
+
+
+
 class Minecraft:
     """The main class to interact with a running instance of Minecraft Pi."""
     def __init__(self, connection, playerId):
@@ -259,25 +281,23 @@ class Minecraft:
         return data
 
     def getBlocks(self, x1:int, y1:int, z1:int, x2:int, y2:int, z2:int) -> list:
-        """Get a cuboid of blocks (x0,y0,z0,x1,y1,z1) => [id:int]"""
+        """A cuboid of blocks, as nested lists indexed [y][x][z].
+
+        The order is the server's, and it is not the obvious one: FruitJuice
+        walks the cuboid with Y outermost, then X, then Z. So the flat reply is
+        a stack of horizontal slabs, each slab a set of rows running east, each
+        row running south.
+
+        This used to reshape into slabs of xSize * ySize, which is the right
+        SIZE only when the cuboid happens to be as tall as it is deep. Any
+        other shape silently came back scrambled -- every block was a real
+        block from somewhere in the box, just not from where you thought, so
+        nothing looked wrong until the answer was checked against a place
+        somebody could actually stand.
+        """
         blocks = self.conn.sendReceive(b"world.getBlocks", x1, y1, z1, x2, y2, z2)
-        arr1d = blocks.split(',')
-        
-        xSize = abs(x1 - x2) + 1
-        ySize = abs(y1 - y2) + 1
-        zSize = abs(z1 - z2) + 1
-        totalSize = xSize * ySize * zSize
-        arr3d = []
-        
-        if len(arr1d) != totalSize:
-            warn('Get number of blocks is incomplete')
-        
-        for i in range(0,totalSize,xSize*ySize):
-            curArr = []
-            for j in range(0,xSize*ySize,xSize):
-                curArr.append(arr1d[i+j:i+j+xSize])
-            arr3d.append(curArr)
-        return arr3d
+        return reshape_blocks(blocks.split(","),
+                              abs(x1 - x2) + 1, abs(y1 - y2) + 1, abs(z1 - z2) + 1)
 
     # DIRECTION: NORTH SOUTH EAST WEST
     # FACE: FLOOR, CEILING, WALL

@@ -102,7 +102,10 @@ STAR_BLOCKS = {
 ROCK_BY_TEMP = (
     (180.0, ["PACKED_ICE", "BLUE_ICE"]),
     (320.0, ["GRASS_BLOCK", "STONE"]),
-    (600.0, ["TERRACOTTA", "RED_SAND"]),
+    # Red sandstone, not red sand: these hang in the sky with nothing under
+    # them, and a gravity-affected block up there is one block update away
+    # from raining the planet onto the ground.
+    (600.0, ["TERRACOTTA", "RED_SANDSTONE"]),
     (1200.0, ["BLACKSTONE", "BASALT"]),
     (float("inf"), ["MAGMA_BLOCK", "NETHERRACK"]),
 )

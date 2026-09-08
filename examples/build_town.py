@@ -61,6 +61,43 @@ PALETTES = {
     },
 }
 
+# Blocks that fall when nothing holds them up, and what to use instead.
+#
+# This matters only because a crust floats, and it very nearly does not
+# announce itself. Blocks are placed with physics off -- deliberately, because
+# running block physics for every one of half a million placements is what
+# stalled the server and got it killed by the watchdog -- so gravity is never
+# evaluated at build time and a crust of regolith sits in mid-air looking
+# perfectly solid. It stays that way until anything at all causes a block
+# update nearby. Mine one block and the update spreads, every neighbour
+# discovers it is unsupported, and the landscape drains away.
+#
+# The Moon's top three layers were concrete powder and Mars's top two were red
+# sand, so both were a landslide waiting for the first pickaxe. The substitutes
+# are chosen to keep the colour: the point of the palette is that regolith is
+# grey, not that it is dust.
+_COLOURS = ("WHITE", "ORANGE", "MAGENTA", "LIGHT_BLUE", "YELLOW", "LIME",
+            "PINK", "GRAY", "LIGHT_GRAY", "CYAN", "PURPLE", "BLUE", "BROWN",
+            "GREEN", "RED", "BLACK")
+FALLING = {"%s_CONCRETE_POWDER" % c: "%s_CONCRETE" % c for c in _COLOURS}
+FALLING.update({
+    "SAND": "SANDSTONE",
+    "SUSPICIOUS_SAND": "SANDSTONE",
+    "RED_SAND": "RED_SANDSTONE",
+    "GRAVEL": "COBBLESTONE",
+    "SUSPICIOUS_GRAVEL": "COBBLESTONE",
+    "ANVIL": "IRON_BLOCK",
+    "POINTED_DRIPSTONE": "DRIPSTONE_BLOCK",
+    "SCAFFOLDING": "OAK_PLANKS",
+    "DRAGON_EGG": "OBSIDIAN",
+})
+
+
+def anchored(material):
+    """The nearest block of the same colour that stays where it is put."""
+    return FALLING.get(material, material)
+
+
 WALL = "WHITE_CONCRETE"
 ROOF = "GRAY_CONCRETE"
 
@@ -347,17 +384,51 @@ def to_voxels(ground, buildings, base_y, depth, hollow=True, body="earth",
     # surface either way; the difference is only visible from underneath, and
     # from underneath there is nothing to see.
     #
+    # But a FLAT crust is both too much and too little. Too much because on
+    # level ground one block is plenty -- nothing can see past it. Too little
+    # because where the ground drops sharply, a column whose neighbour sits
+    # more than `crust` blocks below it has daylight under its lip, and you
+    # see straight through the wall of the valley you came to look at.
+    #
+    # So `crust` is a MINIMUM, and each column is thickened to cover the drop
+    # to its lowest neighbour. On Hadley Rille that turns 1.37M blocks into
+    # 310k -- four times cheaper -- while closing 671 columns of holes that a
+    # flat crust of five left open, because the deepest drop there is 81
+    # blocks and no sane constant covers it.
+    #
     # The label is i + 1, not len(soil) - i. The latter reads the list
     # backwards and buries the grass: yards came out coarse dirt with the turf
     # three blocks down, and Mars had terracotta on top instead of red sand.
     # Anywhere with a land-cover tag was painted over afterwards and looked
     # right, so only the untagged ground -- which is to say people's gardens --
     # showed it.
+    # How far below each column's top its lowest neighbour sits. Off the edge
+    # of the map there is no neighbour, so nothing is required there and the
+    # rim comes out thin, which is what a cut-out of terrain should look like.
+    thickness = None
+    if crust is not None:
+        drop = np.zeros_like(ground_h)
+        for axis in (0, 1):
+            for step in (1, -1):
+                shifted = np.roll(ground_h, step, axis=axis)
+                if axis == 0:
+                    if step == 1:
+                        shifted[0, :] = ground_h[0, :]
+                    else:
+                        shifted[-1, :] = ground_h[-1, :]
+                else:
+                    if step == 1:
+                        shifted[:, 0] = ground_h[:, 0]
+                    else:
+                        shifted[:, -1] = ground_h[:, -1]
+                drop = np.maximum(drop, ground_h - shifted)
+        thickness = np.maximum(int(crust), np.maximum(drop, 0))
+
     for x in range(nx):
         col = ground_h[x]
         for z in range(nz):
             top = col[z]
-            bottom = 0 if crust is None else max(0, top - int(crust))
+            bottom = 0 if crust is None else max(0, top - int(thickness[x, z]))
             world[x, bottom:top, z] = stone
             for i, _ in enumerate(soil):
                 y = top - 1 - i
@@ -537,6 +608,11 @@ def to_voxels(ground, buildings, base_y, depth, hollow=True, body="earth",
                             world[px, py, pz] = leaf_label
 
     palette = soil + [deep, WALL, ROOF] + extra
+    if crust is not None:
+        # Only when there is a crust. A build filled to the floor rests on
+        # something, so sand on Mars can behave like sand, which is half the
+        # reason it is sand.
+        palette = [anchored(m) for m in palette]
     return world, palette
 
 
