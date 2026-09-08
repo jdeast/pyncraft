@@ -98,6 +98,45 @@ BODIES = {
 # GeoTIFF keys say, and unproject() below turns the corner pixels back into
 # latitude and longitude to check they reproduce the published extent.
 SITE_DEMS = {
+    "apollo11": {
+        "body": "moon",
+        "url": "https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/"
+               "LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO11/NAC_DTM_APOLLO11.TIF",
+        "metres_per_pixel": 2.0,
+        "units_per_metre": 1.0,
+        "lat": 0.674, "lon": 23.473,
+        "what": "Apollo 11, Tranquility Base -- LROC NAC stereo DTM",
+        "source": "LROC / NAC_DTM_APOLLO11, 2 m per pixel",
+        "extent": None,
+        "projection": {"kind": "equirectangular", "radius_m": 1737400.0,
+                       "centre_lon": 180.0, "standard_parallel": 1.0},
+    },
+    "apollo12": {
+        "body": "moon",
+        "url": "https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/"
+               "LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO12/NAC_DTM_APOLLO12.TIF",
+        "metres_per_pixel": 2.0,
+        "units_per_metre": 1.0,
+        "lat": -3.012, "lon": 336.578,
+        "what": "Apollo 12, Surveyor Crater -- LROC NAC stereo DTM",
+        "source": "LROC / NAC_DTM_APOLLO12, 2 m per pixel",
+        "extent": None,
+        "projection": {"kind": "equirectangular", "radius_m": 1737400.0,
+                       "centre_lon": 180.0, "standard_parallel": -3.0},
+    },
+    "apollo14": {
+        "body": "moon",
+        "url": "https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/"
+               "LROLRC_2001/DATA/SDP/NAC_DTM/APOLLO14/NAC_DTM_APOLLO14.TIF",
+        "metres_per_pixel": 2.0,
+        "units_per_metre": 1.0,
+        "lat": -3.645, "lon": 342.522,
+        "what": "Apollo 14, Fra Mauro and Cone Crater -- LROC NAC stereo DTM",
+        "source": "LROC / NAC_DTM_APOLLO14, 2 m per pixel",
+        "extent": None,
+        "projection": {"kind": "equirectangular", "radius_m": 1737400.0,
+                       "centre_lon": 180.0, "standard_parallel": -3.0},
+    },
     "apollo15": {
         "body": "moon",
         "url": "https://pds.lroc.im-ldi.com/data/LRO-L-LROC-5-RDR-V1.0/"
@@ -318,14 +357,46 @@ def read_window(url, info, row0, col0, rows, cols, wrap=True):
     """
     bo = info["byte_order"]
     width = info["width"]
-    row_bytes = info["strip_bytes"][0]
-
-    start = info["strip_offsets"][row0]
-    end = info["strip_offsets"][row0 + rows - 1] + row_bytes - 1
-    raw = _get(url, start, end)
-
+    offsets = info["strip_offsets"]
+    counts = info["strip_bytes"]
     dtype = np.dtype(bo + info["sample_dtype"])
-    block = np.frombuffer(raw, dtype=dtype, count=rows * width).reshape(rows, width)
+
+    # Rows are NOT necessarily in file order.
+    #
+    # Apollo 15 stores them one after another, which is what this used to
+    # assume: take the offset of the first row, the offset of the last, and
+    # ask for everything between. Apollo 12 keeps row 0 at the very END of the
+    # file, after every other row, with a gap in the middle for good measure.
+    # Reading it as one run returned bytes that were all real numbers from
+    # somewhere in the image, just not the rows asked for -- elevations came
+    # out at 3e38 and the landscape was noise.
+    #
+    # So: group the wanted rows into runs that really are contiguous, and ask
+    # for one byte range per run. A file that is in order still costs exactly
+    # one request. Runs are also capped, because a single very large range
+    # comes back truncated from this server and numpy then reads off the end.
+    MAX_RUN = 8 << 20
+    runs = []
+    for r in range(row0, row0 + rows):
+        off, cnt = offsets[r], counts[r]
+        if runs and off == runs[-1][1] and (off + cnt - runs[-1][0]) <= MAX_RUN:
+            runs[-1][1] = off + cnt
+            runs[-1][2].append(r)
+        else:
+            runs.append([off, off + cnt, [r]])
+
+    rowdata = {}
+    for start, end, wanted in runs:
+        raw = _get(url, start, end - 1)
+        if len(raw) < end - start:
+            raise ValueError("short read: asked for %d bytes, got %d"
+                             % (end - start, len(raw)))
+        pos = 0
+        for r in wanted:
+            rowdata[r] = np.frombuffer(raw, dtype=dtype, count=width, offset=pos)
+            pos += counts[r]
+
+    block = np.stack([rowdata[r] for r in range(row0, row0 + rows)])
     if wrap:
         # A global mosaic joins up, so a window across the antimeridian works.
         idx = np.arange(col0, col0 + cols) % width

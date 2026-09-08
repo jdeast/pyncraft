@@ -42,6 +42,23 @@ MALAPERT = {
 }
 MALAPERT_PROJ = fetch_planet.SITE_DEMS["malapert"]["projection"]
 
+# The other three Apollo DTMs, again straight from the files. Apollo 12's is
+# the odd one: a compact 4.94 x 2.73 km tile rather than a long strip, and the
+# only one whose rows are not stored in order.
+HEADERS = {
+    "apollo15": APOLLO15,
+    "malapert": MALAPERT,
+    "apollo11": {"width": 2111, "height": 13978,
+                 "x_min": -4748754.0000014, "y_max": 37496.000000011,
+                 "x_scale": 2.0000000000006, "y_scale": 2.0000000000006},
+    "apollo12": {"width": 2468, "height": 1367,
+                 "x_min": 4737648.0000014, "y_max": -89822.000000027,
+                 "x_scale": 2.0000000000006, "y_scale": 2.0000000000006},
+    "apollo14": {"width": 2156, "height": 14400,
+                 "x_min": 4919932.0000015, "y_max": -89856.000000027,
+                 "x_scale": 2.0000000000006, "y_scale": 2.0000000000006},
+}
+
 
 def _full(info):
     """Fill in the derived extent the reader normally computes."""
@@ -95,12 +112,13 @@ def test_projection_round_trips(name, info, proj, lat, lon):
 
 def test_the_landing_site_is_in_its_own_dem():
     """Each site DEM must actually contain the coordinates it is filed under."""
+    assert set(HEADERS) == set(fetch_planet.SITE_DEMS),         "a DEM was added without its header, so nothing here checks it"
     for name, dem in fetch_planet.SITE_DEMS.items():
-        info = _full(APOLLO15 if name == "apollo15" else MALAPERT)
+        info = _full(HEADERS[name])
         col, row = fetch_planet.pixel_for(dem["lat"], dem["lon"], info,
                                           dem["projection"])
-        assert 0 <= col < info["width"], name
-        assert 0 <= row < info["height"], name
+        assert 0 <= col < info["width"], "%s: col %d of %d" % (name, col, info["width"])
+        assert 0 <= row < info["height"], "%s: row %d of %d" % (name, row, info["height"])
 
 
 def test_polar_stereographic_pole_is_the_origin():
