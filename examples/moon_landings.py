@@ -219,6 +219,26 @@ def place(mc, recipe, ox, oy, oz):
     return mc.buildVoxels(points, origin=(ox + lo[0], oy + lo[1], oz + lo[2]))
 
 
+# Sites with a metre-scale DEM, mapped to the entry in fetch_planet.SITE_DEMS.
+#
+# LOLA's global map is 118 m to the pixel, which is the best there is for the
+# whole Moon and nowhere near the best there is for a landing site. Where
+# somebody has pointed a stereo camera or a dense laser track at the ground we
+# actually care about, there is 2 m or 5 m data, and using it changes what the
+# build is: at 118 m the Lunar Module is one sixteenth of a block and has to
+# stand on a pad beside the map with a sign apologising, and at 2 m it is four
+# blocks tall and stands where it landed.
+HIRES = {
+    "apollo15": "apollo15",
+    "malapert_massif": "malapert",
+}
+
+# A metre-scale window is a lot more blocks per square kilometre, so it wants
+# to be smaller across and hollow underneath.
+HIRES_SIZE = 300
+HIRES_CRUST = 5
+
+
 def main():
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -230,6 +250,10 @@ def main():
                    help="landscape across, in LOLA pixels of 118 m (default 200)")
     p.add_argument("--hardware-only", action="store_true",
                    help="skip the landscape and just build the spacecraft")
+    p.add_argument("--global-dem", action="store_true",
+                   help="use LOLA's 118 m global map even where there is "
+                        "better. Worth doing once, beside the good one, to see "
+                        "what sixty times the resolution actually buys")
     p.add_argument("--list", action="store_true", help="list the sites and stop")
     args = p.parse_args()
 
@@ -274,24 +298,40 @@ def main():
     print("%s" % what)
     print("  %.3f, %.3f  (%s)" % (lat, lon, kind))
 
-    # The landscape, at the only resolution there is.
+    # The landscape, at the best resolution anyone has published for it.
+    metres_per_block = 118.45
     if not args.hardware_only:
         import subprocess
-        name = "moon_" + args.site
-        data = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data",
-                            name + ".npz")
+        here = os.path.dirname(os.path.abspath(__file__))
+        dem = None if args.global_dem else HIRES.get(args.site)
+        name = "moon_%s%s" % (args.site, "_hires" if dem else "")
+        data = os.path.join(here, "data", name + ".npz")
+
         if not os.path.exists(data):
-            print("  fetching the landscape (LOLA, 118 m per pixel)")
-            subprocess.check_call([sys.executable, "fetch_planet.py", "--body", "moon",
-                                   "--lat", str(lat), "--lon", str(lon),
-                                   "--size", str(args.size), "--name", name],
-                                  cwd=os.path.dirname(os.path.abspath(__file__)))
+            if dem:
+                print("  fetching the landscape (site DEM, metre scale)")
+                cmd = [sys.executable, "fetch_planet.py", "--dem", dem,
+                       "--size", str(HIRES_SIZE), "--name", name]
+            else:
+                print("  fetching the landscape (LOLA, 118 m per pixel)")
+                cmd = [sys.executable, "fetch_planet.py", "--body", "moon",
+                       "--lat", str(lat), "--lon", str(lon),
+                       "--size", str(args.size), "--name", name]
+            subprocess.check_call(cmd, cwd=here)
+
         import build_town
         g, b, surf, mats, ids, props, meta = build_town.load(name)
-        world, palette = build_town.to_voxels(g, b, 0, 3, body="moon",
-                                              metres_per_cell=meta["metres_per_cell"])
-        print("  landscape: %d blocks, one block = %.0f m"
-              % (int((world != 0).sum()), meta["metres_per_cell"]))
+        metres_per_block = meta["metres_per_cell"]
+        world, palette = build_town.to_voxels(
+            g, b, 0, 3, body="moon", metres_per_cell=metres_per_block,
+            crust=HIRES_CRUST if dem else None)
+        print("  landscape: %d blocks, one block = %g m, %.1f km across"
+              % (int((world != 0).sum()), metres_per_block,
+                 world.shape[0] * metres_per_block / 1000.0))
+        if dem:
+            print("  source: %s" % meta.get("source_ground", "?"))
+            print("  that is %.0fx finer than the 118 m global map"
+                  % (118.45 / metres_per_block))
         mc.buildVoxels(world, palette=palette, origin=(ox, oy, oz))
         pad_x = ox + world.shape[0] + 8
     else:
@@ -309,18 +349,25 @@ def main():
         builder, spec, scale = HARDWARE[key]
         recipe = builder(scale)
         sent = place(mc, recipe, here, oy, oz)
-        blocks_on_map = spec["height_m"] / 118.45
+        blocks_on_map = spec["height_m"] / metres_per_block
         print("  %s: %d blocks, %d commands, 1 block = %.2f m"
               % (spec["name"], len(recipe), sent, scale))
         print("     real size %s" % spec["real"])
-        print("     on the landscape it would be %.2f blocks tall" % blocks_on_map)
+        if blocks_on_map >= 1.0:
+            print("     on the landscape beside it, %.1f blocks tall -- which at"
+                  % blocks_on_map)
+            print("     this resolution is something you can actually see")
+        else:
+            print("     on the landscape it would be %.2f blocks tall"
+                  % blocks_on_map)
         mc.setSign(here, oy, oz - 4, "OAK_SIGN", "NORTH",
                    spec["name"][:15], spec["real"][:15],
                    "1 block=%.1fm" % scale,
                    "%.2f blk on map" % blocks_on_map)
         here += 40
 
-    mc.postToChat("%s -- landscape at 118 m/block, hardware at its own scale." % what)
+    mc.postToChat("%s -- landscape at %g m/block, hardware at its own scale."
+                  % (what, metres_per_block))
 
 
 if __name__ == "__main__":
