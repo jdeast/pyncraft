@@ -17,6 +17,20 @@ import argparse
 import os
 import sys
 
+# Prefer the pyncraft next to these examples over any installed copy.
+#
+# Every example imports this module, so putting it here fixes all of them at
+# once. Without it, someone who has run "pip install pyncraft" and then edits
+# the library sees no effect at all -- the installed version wins on sys.path
+# and the changes appear to do nothing, which is a genuinely baffling place to
+# be stuck. render_stl.py hit exactly that: the installed 0.2.3 has no
+# buildVoxels, so it failed with AttributeError on a method sitting right there
+# in the checkout.
+_here = os.path.dirname(os.path.abspath(__file__))
+_checkout = os.path.dirname(_here)
+if os.path.isdir(os.path.join(_checkout, "pyncraft")) and _checkout not in sys.path:
+    sys.path.insert(0, _checkout)
+
 from pyncraft.minecraft import Minecraft
 
 def _port_from_environment(default=4711):

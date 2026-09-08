@@ -1,206 +1,240 @@
-import connect
-from pyncraft.minecraft import Minecraft
-from pyncraft.vec3 import Vec3
-try:
-    import stltovoxel
-except ImportError:
-    raise SystemExit(
-        "This example needs one more library. Run:\n"
-        "    pip install stl-to-voxel")
-import time, math, os, random
-import numpy as np
-import datetime
+#!/usr/bin/env python3
+"""Build an STL file in Minecraft.
+
+    python render_stl.py --model unicorn
+    python render_stl.py --file data/T-Rex.stl --size 60 --material WHITE_CONCRETE
+
+STL is the format 3D printers use, so there are millions of them about, free,
+of almost anything. stltovoxel turns one into a cloud of filled cubes, and this
+turns those into blocks.
+
+WHAT CHANGED, AND WHY IT MATTERS HERE
+
+This used to send one world.setBlock per block with a sleep in between, and its
+own documentation explained that the sleep was there so as not to crash the
+server. A hundred thousand block model took sixteen minutes and there was no
+way round it.
+
+mc.buildVoxels splits the shape into maximal boxes and fills each with one
+command, and paces itself, which is what the sleep was really for.
+
+That inverts an assumption this file was built on. Hollowing a model out --
+discarding every block with all six neighbours filled -- used to be the main
+way to make rendering bearable, because it removed most of the blocks. With box
+decomposition it does the opposite: a solid lump is a handful of large boxes,
+while a shell is a thin curved surface that merges into almost nothing. Solid
+is now both quicker to send and fewer commands. Hollow is still worth having,
+because walking around inside a T-Rex is its own reward, but it is a choice
+about what you want rather than a way to go faster -- so the default flipped.
+"""
 import argparse
+import math
+import os
+import sys
+import time
+
+import numpy as np
+
+import connect
+
+DEFAULT_MATERIAL = "OAK_PLANKS"
 
 
-''' 
-renders an stl file
+def voxelise(stlfile, resolution=200, verbose=True):
+    """STL to an (n, 3) array of filled cube centres, caching the slow part.
 
-stlfile - the path to a valid STL file. STL files are standard files that represent 3D objects. They can be googled 
-(they're often used for 3D printing) or you can create your own in something like solidworks.
-This program imports these drawings into minecraft using the stltovoxel library.
+    stltovoxel is needed only here, and only the first time a given model and
+    resolution are used, so it is imported at the point of use. Everything else
+    in this file works without it.
+    """
+    xyzfile = "%s_%d.xyz" % (os.path.splitext(stlfile)[0], resolution)
 
-maxx - scale the x dimension to this number of blocks
-maxy - scale the y dimension to this number of blocks
-maxz - scale the z dimension to this number of blocks
-maxsize - scale the maximum dimension to this number of blocks
+    if not os.path.exists(xyzfile):
+        if not os.path.exists(stlfile):
+            raise SystemExit("No such STL file: %s" % stlfile)
+        try:
+            import stltovoxel
+        except ImportError:
+            raise SystemExit(
+                "Turning an STL into cubes needs one more library:\n"
+                "    pip install stl-to-voxel\n"
+                "It is needed the first time you use a model; after that the\n"
+                "result is cached beside the STL as a .xyz file.")
+        if verbose:
+            print("voxelising %s at resolution %d (once, then cached)"
+                  % (os.path.basename(stlfile), resolution))
+        stltovoxel.convert_file(stlfile, xyzfile, resolution=resolution)
 
-the longest dimension is scaled to this many blocks within minecraft. 
-Increase for higher definition/larger size. 
+    return np.loadtxt(xyzfile)
 
-NOTE: the aspect ratio is always maintained. If more than one of (maxx, maxy, maxz, maxsize) is specified, only the first in this order is respected.
 
-Decrease for smaller size/faster rendering. Rendering time goes as maxsize^2 (maxsize^3 if solid==True)
+def rotate(xyz, theta=0.0, psi=0.0, phi=0.0):
+    """Euler rotation, so a model can be stood the right way up.
 
-xpos - x coordinate of the corner of the model
-ypos - y coordinate of the corner of the model
-zpos - z coordinate of the corner of the model
-theta - rotation angle (radians)
-psi - rotation angle (radians)
-phi - rotation about the X axis (radians)
-wait_between_blocks - time, in seconds, to wait between placing subsequent blocks (so we don't crash the server)
-resolution - resolution of the STL file
-material - The material to use, default OAK_PLANKS
-solid - By default, the object is hollowed out such that any block surrounded that would 
-        have been surrounded by other blocks is removed. This makes rendering faster.
-        It's also fun to explore inside the objects. 
-        Set this to retain all blocks.
-ordered_render - When an object is hollowed out, the blocks are resorted into hash tables. 
-                 Set ordered_render=True to resort by X, Y, Z. 
-                 Both hash ordered and XYZ ordered is pretty neat to watch. 
+    Most STLs are modelled Z-up and Minecraft is Y-up, so phi = -pi/2 is the
+    usual case and most of the models below want it.
+    """
+    if not (theta or psi or phi):
+        return xyz
+    x, y, z = xyz[:, 0], xyz[:, 1], xyz[:, 2]
+    ct, st = math.cos(theta), math.sin(theta)
+    cp, sp = math.cos(psi), math.sin(psi)
+    cf, sf = math.cos(phi), math.sin(phi)
+    out = np.empty_like(xyz)
+    out[:, 0] = x * (ct * cp) + y * (sf * st * cp - cf * sp) + z * (cf * st * cp + sf * sp)
+    out[:, 1] = x * (ct * sp) + y * (sf * st * sp + cf * cp) + z * (cf * st * sp - sf * cp)
+    out[:, 2] = x * (-st) + y * (sf * ct) + z * (cf * ct)
+    return out
 
-'''
 
-def render_stl(mc,stlfile,maxsize=25,maxx=None,maxy=None,maxz=None,xpos=0,ypos=50.0,zpos=0.0,
-               theta=0.0,psi=0.0,phi=0.0,wait_between_blocks=0.01, resolution=200,material='OAK_PLANKS', 
-               use_player_position=False, solid=False, ordered_render=False):
+def to_grid(xyz, size=25, max_x=None, max_y=None, max_z=None):
+    """Scale a point cloud onto a block grid, keeping its proportions.
 
-   xyzfile = os.path.splitext(stlfile)[0] + "_" + str(resolution) + '.xyz'
+    Whichever of max_x/max_y/max_z comes first sets the scale; otherwise the
+    longest side becomes `size` blocks. The aspect ratio is always kept.
+    """
+    span = xyz.max(axis=0) - xyz.min(axis=0)
+    span = np.where(span == 0, 1.0, span)
 
-   # convert the STL file to a series of XYZ positions. 
-   # if the xyz file doesn't exist (from a previous run), create it
-   if not os.path.exists(xyzfile):
-      if not os.path.exists(stlfile):
-         print("ERROR: no XYZ or STL file exists; check path")
-         return
-      stltovoxel.convert_file(stlfile, xyzfile, resolution=resolution)
+    if max_x is not None:
+        scale = max_x / span[0]
+    elif max_y is not None:
+        scale = max_y / span[1]
+    elif max_z is not None:
+        scale = max_z / span[2]
+    else:
+        scale = size / span.max()
 
-   if use_player_position:
-      pos = mc.player.getTilePos()
-   else:
-      pos = Vec3(xpos,ypos,zpos)
+    grid = np.rint((xyz - xyz.min(axis=0)) * scale).astype(int)
+    return np.unique(grid, axis=0)
 
-   # read the file
-   xyz = np.loadtxt(xyzfile)
 
-   # rotate with Euler angles theta, psi, phi
-   x = xyz[:,0]
-   y = xyz[:,1]
-   z = xyz[:,2]
-   xrot = x*(np.cos(theta)*np.cos(psi)) + y*(np.sin(phi)*np.sin(theta)*np.cos(psi) - np.cos(phi)*np.sin(psi)) + z*(np.cos(phi)*np.sin(theta)*np.cos(psi) + np.sin(phi)*np.sin(psi))
-   yrot = x*(np.cos(theta)*np.sin(psi)) + y*(np.sin(phi)*np.sin(theta)*np.sin(psi) + np.cos(phi)*np.cos(psi)) + z*(np.cos(phi)*np.sin(theta)*np.sin(psi) - np.sin(phi)*np.cos(psi))
-   zrot = x*(-np.sin(theta))            + y*(np.sin(phi)*np.cos(theta))                                       + z*(np.cos(phi)*np.cos(theta))
-   xyz[:,0] = xrot
-   xyz[:,1] = yrot
-   xyz[:,2] = zrot
+def to_array(grid):
+    """An (n, 3) list of integer cells to a dense boolean array."""
+    if not len(grid):
+        return np.zeros((0, 0, 0), dtype=bool)
+    shape = grid.max(axis=0) + 1
+    array = np.zeros(tuple(int(v) for v in shape), dtype=bool)
+    array[grid[:, 0], grid[:, 1], grid[:, 2]] = True
+    return array
 
-   # scale to desired size
-   xrange = np.max(xyz[:,0])-np.min(xyz[:,0])
-   yrange = np.max(xyz[:,1])-np.min(xyz[:,1])
-   zrange = np.max(xyz[:,2])-np.min(xyz[:,2])
-   if maxx != None: scale = maxx/xrange
-   elif maxy != None: scale = maxy/yrange
-   elif maxz != None: scale = maxz/zrange
-   else: 
-      maxrange = np.max([xrange,yrange,zrange])
-      scale = maxsize/maxrange
 
-   # move to desired position and round
-   xyz[:,0] = np.round((xyz[:,0] - np.min(xyz[:,0]))*scale + pos.x)
-   xyz[:,1] = np.round((xyz[:,1] - np.min(xyz[:,1]))*scale + pos.y)
-   xyz[:,2] = np.round((xyz[:,2] - np.min(xyz[:,2]))*scale + pos.z)
+def hollow(array):
+    """Keep only the shell: drop every block with all six neighbours filled.
 
-   # remove duplicates (minimizes server communication, especially when resolution is high)
-   xyz = np.unique(xyz,axis=0)
+    The old version did this by appending to a numpy array inside a Python loop
+    over a set, which is quadratic and was the slowest part of a large model.
+    Shifting the whole array six ways gives the same answer in six operations.
+    """
+    if array.size == 0:
+        return array
+    interior = np.ones_like(array)
+    interior[:-1, :, :] &= array[1:, :, :]
+    interior[1:, :, :] &= array[:-1, :, :]
+    interior[:, :-1, :] &= array[:, 1:, :]
+    interior[:, 1:, :] &= array[:, :-1, :]
+    interior[:, :, :-1] &= array[:, :, 1:]
+    interior[:, :, 1:] &= array[:, :, :-1]
+    # A cell on the face of the box has no outside neighbour, so nothing there
+    # is interior however solid the model is.
+    interior[0, :, :] = interior[-1, :, :] = False
+    interior[:, 0, :] = interior[:, -1, :] = False
+    interior[:, :, 0] = interior[:, :, -1] = False
+    return array & ~interior
 
-   # make it hollow to speed up rendering
-   # this scrambles the order of xyz. resort it by setting ordered_render=True
-   # but random rendering is actually a pretty nice effect, especially for large objects 
-   if not solid: xyz = shell(xyz, ordered_render=ordered_render)
 
-   #print(np.shape(xyz))
-   #print(np.shape(xyz2))
+def render_stl(mc, stlfile, size=25, max_x=None, max_y=None, max_z=None,
+               origin=None, theta=0.0, psi=0.0, phi=0.0, resolution=200,
+               material=DEFAULT_MATERIAL, solid=True, blocks_per_second=25000,
+               verbose=True):
+    """Put an STL model in the world. Returns (blocks, commands, seconds)."""
+    xyz = voxelise(stlfile, resolution, verbose=verbose)
+    xyz = rotate(xyz, theta, psi, phi)
+    array = to_array(to_grid(xyz, size, max_x, max_y, max_z))
 
-   x = xyz[:,0]
-   y = xyz[:,1]
-   z = xyz[:,2]
+    filled = int(array.sum())
+    if not solid:
+        array = hollow(array)
+        if verbose:
+            print("  hollowed: %d blocks of %d kept" % (int(array.sum()), filled))
 
-   t0 = datetime.datetime.utcnow()
-   print("rendering will take ~" + str(len(x)*wait_between_blocks/60) + " minutes for " + str(len(x)) + " blocks")
+    if origin is None:
+        p = mc.player.getTilePos()
+        origin = (p.x, p.y, p.z)
 
-   # render each block in minecraft
-   for i in range(len(x)):
-      mc.setBlock(x[i],y[i],z[i],material)
-      print((x[i],y[i],z[i]))
-      # you can overload the server pretty quickly without waiting
-      time.sleep(wait_between_blocks) 
+    blocks = int(array.sum())
+    if verbose:
+        print("  %s: %d blocks, %d x %d x %d"
+              % (os.path.basename(stlfile), blocks,
+                 array.shape[0], array.shape[1], array.shape[2]))
 
-   print("rendering took " + str((datetime.datetime.utcnow()-t0).total_seconds()) + " seconds for " + str(len(x)) + " blocks")
+    started = time.time()
+    commands = mc.buildVoxels(array, block=material, origin=origin,
+                              blocks_per_second=blocks_per_second)
+    elapsed = time.time() - started
+    if verbose:
+        print("  %d commands in %.1fs (%.0fx fewer than one per block)"
+              % (commands, elapsed, blocks / max(commands, 1)))
+    return blocks, commands, elapsed
 
-   return ( np.max(xyz[:,0])-np.min(xyz[:,0]), np.max(xyz[:,1])-np.min(xyz[:,1]), np.max(xyz[:,2])-np.min(xyz[:,2]) )
 
-def shell(xyz, ordered_render=False):
+# The models the old script knew about, with the rotation each needs to stand
+# up. Kept as data, so adding one is a line rather than another branch -- the
+# old version had six near-identical branches and two of them were broken.
+MODELS = {
+    "unicorn":   ("alicorn-rmd-repaired.stl", -math.pi / 2, 100, "WHITE_CONCRETE"),
+    "trex":      ("T-Rex.stl", -math.pi / 2, 60, "LIME_TERRACOTTA"),
+    "tajmahal":  ("taj-mahal-by-miniworld3d.stl", 0.0, 100, "WHITE_CONCRETE"),
+    "colosseum": ("Colosseum_final.stl", -math.pi / 2, 60, "SMOOTH_SANDSTONE"),
+    "jwst":      ("JWST.stl", -math.pi / 2, 120, "GOLD_BLOCK"),
+    "carnival":  ("carnival_wheel_assy.STL", 0.0, 80, "IRON_BLOCK"),
+}
 
-   neighbor_offsets = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
-   xyz_set = set(map(tuple, xyz)) 
+DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
-   shell_xyz = []
 
-   # If any neighbor is missing, the position is exposed
-   for x, y, z in xyz_set:
-      if any((x + dx, y + dy, z + dz) not in xyz_set for dx, dy, dz in neighbor_offsets):
+def main():
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    connect.add_arguments(p)
+    p.add_argument("--model", choices=sorted(MODELS),
+                   help="one of the models this knows about; --list to see them")
+    p.add_argument("--file", help="any other STL file")
+    p.add_argument("--size", type=int, default=None, help="longest side, in blocks")
+    p.add_argument("--material", default=None, help="which block to build it from")
+    p.add_argument("--resolution", type=int, default=200, help="voxelising resolution")
+    p.add_argument("--at", nargs=3, type=int, metavar=("X", "Y", "Z"),
+                   help="where to put it (default: where you are standing)")
+    p.add_argument("--hollow", action="store_true",
+                   help="keep only the shell, so you can walk about inside. Slower "
+                        "to send than solid now that whole boxes go at once")
+    p.add_argument("--list", action="store_true", help="list the models and stop")
+    args = p.parse_args()
 
-         t1 = datetime.datetime.utcnow()
-         if len(shell_xyz)==0:
-            shell_xyz = np.transpose(np.array([[x,y,z]]))
-         else:
-            shell_xyz = np.hstack((shell_xyz,np.transpose(np.array([[x,y,z]]))))
+    if args.list:
+        for name, (filename, _phi, size, material) in sorted(MODELS.items()):
+            missing = "" if os.path.exists(os.path.join(DATA, filename)) \
+                else "   -- not downloaded, see fetch_models.py"
+            print("  %-10s %-34s %3d blocks, %s%s"
+                  % (name, filename, size, material, missing))
+        return
 
-   if ordered_render:
-      return np.array(sorted(np.transpose(shell_xyz), key=lambda pos: (pos[0], pos[1], pos[2])))
-   else: 
-      return np.transpose(shell_xyz)
+    if args.model:
+        filename, phi, size, material = MODELS[args.model]
+        stlfile = os.path.join(DATA, filename)
+    elif args.file:
+        stlfile, phi, size, material = args.file, 0.0, 40, DEFAULT_MATERIAL
+    else:
+        sys.exit("Give --model (--list shows them) or --file <something.stl>.")
+
+    mc = connect.connect(args.host, args.port, args.player)
+    render_stl(mc, stlfile,
+               size=args.size or size,
+               material=args.material or material,
+               phi=phi, resolution=args.resolution,
+               origin=tuple(args.at) if args.at else None,
+               solid=not args.hollow)
+
 
 if __name__ == "__main__":
-
-   parser = argparse.ArgumentParser(description='Import STL files into Minecraft')
-   parser.add_argument('-j','--jwst', dest='jwst', action='store_true', default=False, help="Render JWST")
-   parser.add_argument('-w','--carnival', dest='carnival_wheel', action='store_true', default=False, help="Render Carnival Wheel")
-   parser.add_argument('-d','--trex', dest='trex', action='store_true', default=False, help="Render T-Rex")
-   parser.add_argument('-u','--unicorn', dest='unicorn', action='store_true', default=False, help="Render Unicorn")
-   parser.add_argument('-t','--tajmahal', dest='tajmahal', action='store_true', default=False, help="Render Taj Mahal")
-   parser.add_argument('-c','--colosseum', dest='colosseum', action='store_true', default=False, help="Render Colosseum")
-
-
-   connect.add_arguments(parser)
-   opt = parser.parse_args()
-
-   path = "data"
-
-   # get the user's position
-   mc = connect.connect(opt.host, opt.port, opt.player)
-   pos = mc.player.getTilePos()
-
-   if opt.jwst:
-      # Space telescope
-      # https://webbtelescope.org/contents/media/products/01G0MSRACZN6NDZTYHZJ44WWCY
-      stlfile = os.path.join(path,'JWST.stl')
-      phi = -math.pi/2.0 # rotate so sun shield is down
-      theta = math.pi # rotate so sun shield is down
-      render_stl.render_stl(mc,stlfile,maxsize=200, xpos=x+150, ypos=y, zpos=z)
-
-   if opt.carnival_wheel:
-      # solidworks drawing by Blake Eastman
-      stlfile = os.path.join(path,"carnival_wheel_assy.STL")
-      render_stl.render_stl(mc,stlfile,maxsize=200, xpos=x+150, ypos=y, zpos=z)
-
-   if opt.trex:
-      # https://www.ameede.net/dinosaur-t-rex-h003332-file-stl-free-download-3d-model-for-cnc-and-3d-printer/
-      stlfile = os.path.join(path,"T-Rex.stl")
-
-   if opt.unicorn:
-      stlfile = os.path.join(path,"alicorn-rmd-repaired.stl")
-      phi = -math.pi/2.0 # rotate so unicorn is standing up
-      render_stl(mc, stlfile, maxsize=100, xpos=2000, ypos=-60, zpos=2000, phi=phi, material="WHITE_CONCRETE")
-
-   if opt.tajmahal:
-      # https://www.printables.com/model/264372-taj-mahal-agra-india/files
-      phi = 0 #-math.pi/2.0 # rotate so unicorn is standing up
-      stlfile = os.path.join(path,"taj-mahal-by-miniworld3d.stl")
-      render_stl(mc, stlfile, maxsize=100, xpos=0, ypos=-60, zpos=6000, phi=phi, material="WHITE_CONCRETE")
-
-   if opt.colosseum:
-      #https://www.printables.com/model/217557-coliseum/files
-      stlfile = os.path.join(path,"colosseum_final.stl")
-      phi = -math.pi/2.0
-      render_stl(mc, stlfile, maxsize=30, xpos=1000, ypos=-60, zpos=1000, phi=phi, material="WHITE_CONCRETE")
+    main()

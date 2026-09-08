@@ -581,15 +581,24 @@ def place_house_numbers(mc, meta, building_ids, buildings, ground, surface,
                     continue
                 score = 2 if int(surf[px, pz]) in street_codes else 1
                 if best is None or score > best[0]:
-                    best = (score, px, pz)
+                    best = (score, px, pz, dx, dz)
             if best and best[0] == 2:
                 break
         if best is None:
             continue
-        _, px, pz = best
+        _, px, pz, dx, dz = best
+
+        # Face the sign away from the building it belongs to, which is the way
+        # somebody walking up the street would read it. Every sign faced north
+        # before, so half of them were readable only from inside a house.
+        #
+        # +X is east and +Z is south, which is Minecraft's own convention and
+        # the one the rest of the build uses.
+        facing = {(1, 0): "EAST", (-1, 0): "WEST",
+                  (0, 1): "SOUTH", (0, -1): "NORTH"}.get((dx, dz), "NORTH")
         sy = oy + int(ground_h[px, pz])
         try:
-            mc.setSign(ox + px, sy, oz + pz, "OAK_SIGN", "NORTH",
+            mc.setSign(ox + px, sy, oz + pz, "OAK_SIGN", facing,
                        str(number), str(street), "", "")
             placed += 1
         except Exception:
