@@ -22,3 +22,13 @@ examples/data/*.STL
 # other large binaries that have no business in a source repository
 *.jar
 *.zip
+
+# Cached Exoplanet Archive queries. Two kilobytes each and answered in a
+# second, so caching them in git would only serve stale numbers -- the whole
+# point is that the archive is live.
+examples/data/exo*.csv
+
+# Where a build of a planetary system put its blocks, so the next build can
+# clear them. Specific to one world and one set of coordinates; useless in a
+# clone and actively wrong if it travelled to another server.
+examples/data/exo_build_*.json
