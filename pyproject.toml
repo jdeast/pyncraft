@@ -41,6 +41,11 @@ classifiers = [
 # matching wheel; the examples themselves print this command when the import
 # fails, so nobody has to know about it in advance.
 examples = ["stl-to-voxel"]
+# fetch_terrain.py only. Pillow reads the elevation GeoTIFF, which is how that
+# script avoids rasterio and pyproj and therefore GDAL -- a dependency that
+# compiles from source is a wall for exactly the person this is for. Not needed
+# to BUILD the shipped town, only to fetch somewhere new.
+terrain = ["pillow"]
 test = ["pytest"]
 
 [project.urls]
