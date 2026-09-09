@@ -32,3 +32,18 @@ examples/data/exo*.csv
 # clear them. Specific to one world and one set of coordinates; useless in a
 # clone and actively wrong if it travelled to another server.
 examples/data/exo_build_*.json
+
+# Landscape windows fetched by fetch_planet.py.
+#
+# The metre-scale ones run to megabytes each and there is no end to how many
+# there could be -- every landing site, every crater, at every window and
+# stride somebody fancies. They are also perfectly reproducible: the source is
+# a fixed published DEM and the reader is deterministic, so the command is the
+# whole definition of the file. examples/data/README.md records the command
+# for each one, which is smaller than the file and easier to read.
+#
+# NOTE, as with the STLs above: this does not untrack anything already
+# committed. The small 118 m and 463 m windows stay in the repository on
+# purpose, so the examples run with no network at all.
+examples/data/moon_*.npz
+examples/data/mars_*.npz
