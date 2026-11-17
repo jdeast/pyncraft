@@ -108,13 +108,22 @@ def test_chen_rejects_a_nonsense_mass():
 STAR = {"radius_sun": 0.1192, "mass_sun": 0.0898}
 
 
-def test_a_over_rstar_is_preferred_over_the_archive_value():
-    """a/R* is the transit observable, so it wins when both are present."""
-    pl = {"a_over_rstar": 20.843, "a_au": 0.9999, "period_d": 1.5108,
-          "mass_earth": 1.374}
-    a, how = exo.resolve_orbit(pl, STAR)
+def test_orbit_prefers_the_archive_then_kepler_then_a_over_rstar():
+    """Kepler-90 i: a/R* x R* says 0.20 AU, the archive and P both say 0.12."""
+    kepler90 = {"radius_sun": 1.2, "mass_sun": 1.2}
+    i = {"a_over_rstar": 33.8, "st_rad": 1.29, "a_au": 0.1201, "period_d": 14.44912}
+    assert exo.resolve_orbit(i, kepler90) == (0.1201, "archive")
+
+    del i["a_au"]
+    a, how = exo.resolve_orbit(i, kepler90)
+    assert how == "Kepler from P"
+    assert a == pytest.approx(0.1234, rel=0.01)
+
+    del i["period_d"]
+    a, how = exo.resolve_orbit(i, kepler90)
     assert how == "a/R* x R*"
-    assert a == pytest.approx(0.01154, rel=0.01)
+    # and against the radius on its own row, not the star's consensus one
+    assert a == pytest.approx(33.8 * 1.29 * exo.R_SUN_KM / exo.AU_KM)
 
 
 def test_orbit_falls_back_to_the_archive_then_to_kepler():
@@ -124,6 +133,35 @@ def test_orbit_falls_back_to_the_archive_then_to_kepler():
     a, how = exo.resolve_orbit({"period_d": 1.510826}, STAR)
     assert how == "Kepler from P"
     assert a == pytest.approx(0.01154, rel=0.002)
+
+
+def test_the_archive_disagreeing_with_itself_is_noticed():
+    kepler90 = {"radius_sun": 1.2, "mass_sun": 1.2}
+    i = {"a_over_rstar": 33.8, "st_rad": 1.29, "period_d": 14.44912}
+    doubts = exo.orbit_doubts(i, kepler90, 0.1201)
+    assert len(doubts) == 1 and "a/R*" in doubts[0]
+    # TRAPPIST-1 b agrees with itself every way it can be checked
+    b = {"a_over_rstar": 20.843, "period_d": 1.510826}
+    assert exo.orbit_doubts(b, STAR, 0.01154) == []
+    # and nothing orbits inside its star
+    assert "inside the star" in exo.orbit_doubts({}, {"radius_sun": 1.0}, 0.003)[0]
+
+
+def test_the_star_is_the_one_most_planets_agree_on():
+    """KOI-351 has three radii; the first row is just the innermost planet."""
+    rows = ([{"hostname": "KOI-351", "st_teff": "6015", "st_rad": "1.29",
+              "st_mass": "1.12"}]
+            + [{"hostname": "KOI-351", "st_teff": "6080", "st_rad": "1.2",
+                "st_mass": "1.2"}] * 5
+            + [{"hostname": "KOI-351", "st_teff": "6031", "st_rad": "1.185",
+                "st_mass": "1.242"}] * 2)
+    assert exo.consensus_star(rows)["st_rad"] == "1.2"
+
+
+def test_names_match_however_they_are_spaced():
+    assert exo.squash("hd80606") == exo.squash("HD 80606") == "HD80606"
+    assert exo.squash("trappist1") == exo.squash("TRAPPIST-1")
+    assert "'" not in exo.squash("O'Brien's star")
 
 
 def test_orbit_gives_up_loudly_when_it_must():
@@ -165,18 +203,52 @@ def test_a_dense_giant_is_still_a_giant():
     assert kind == "gas giant"
 
 
+TRAPPIST_1 = {"radius_sun": 0.1192, "teff": 2566.0}
+TRAPPIST_PLANETS = [("b", 1.116, 397.6, 0.01154), ("c", 1.097, 339.7, 0.01580),
+                    ("d", 0.788, 286.2, 0.02227), ("e", 0.920, 249.7, 0.02925),
+                    ("f", 1.045, 217.7, 0.03849), ("g", 1.129, 197.3, 0.04683),
+                    ("h", 0.755, 171.7, 0.06189)]
+
+
 def test_the_trappist_habitable_zone_comes_out_green():
-    """e, f and g are the three in the habitable zone, and nothing says so
-    in the code -- it falls out of the equilibrium temperatures."""
+    """e, f and g are the three in the conservative habitable zone, and
+    nothing says so in the code -- it falls out of the sunlight they get.
+
+    d used to come out green too, because a Teq band put the line at 320 K.
+    It gets 1.1 times Earth's sunlight, past the runaway greenhouse limit.
+    And f and g are green despite Teq of 218 and 197 K: Teq has no
+    atmosphere in it, and Earth's own is 255 K.
+    """
     green = {}
-    for letter, radius, eqt in [("b", 1.116, 397.6), ("c", 1.097, 339.7),
-                                ("d", 0.788, 286.2), ("e", 0.920, 249.7),
-                                ("f", 1.045, 217.7), ("g", 1.129, 197.3),
-                                ("h", 0.755, 171.7)]:
-        mats, kind = exo.planet_materials(radius, eqt, None)
+    for letter, radius, eqt, a in TRAPPIST_PLANETS:
+        s = exo.insolation(TRAPPIST_1, a)
+        mats, kind = exo.planet_materials(radius, eqt, None, s, TRAPPIST_1["teff"])
         green[letter] = mats[0] == "GRASS_BLOCK"
-    assert green["e"] and green["f"] and green["g"]
-    assert not green["b"] and not green["c"] and not green["h"]
+    assert green == {"b": False, "c": False, "d": False, "e": True,
+                     "f": True, "g": True, "h": False}
+
+
+def test_the_habitable_zone_is_in_the_right_place_for_the_sun():
+    """Kopparapu 2014 puts the Sun's at 0.95 to 1.67 AU."""
+    inner, outer = exo.habitable_zone(5780.0)
+    assert inner ** -0.5 == pytest.approx(0.95, abs=0.01)
+    assert outer ** -0.5 == pytest.approx(1.67, abs=0.01)
+    sun = {"radius_sun": 1.0, "teff": exo.T_SUN}
+    assert exo.insolation(sun, 1.0) == pytest.approx(1.0)
+    assert exo.insolation(sun, 1.0, 0.5) > 1.0
+
+
+def test_temperature_still_decides_without_a_star():
+    mats, kind = exo.planet_materials(1.0, 250.0, None)
+    assert kind == "habitable-zone rock"
+    mats, kind = exo.planet_materials(1.0, 900.0, None)
+    assert kind == "baked rock"
+
+
+def test_inside_the_inner_edge_is_never_green():
+    """Even when the archive's Teq is temperate-looking."""
+    mats, kind = exo.planet_materials(1.0, 286.0, None, 1.12, 2566.0)
+    assert kind == "hot rock"
 
 
 def test_no_radius_at_all_is_survivable():
@@ -452,6 +524,120 @@ def test_sign_lines_are_measured_in_pixels_not_characters():
     assert len(exo.fit("i" * 60)) > len(exo.fit("m" * 60))
     # Anything that already fits is untouched.
     assert exo.fit("a=0.0115 AU") == "a=0.0115 AU"
+
+
+def _planet(name, radius, a, ecc=0.0):
+    return {"name": name, "radius_earth": radius, "a_au": a, "ecc": ecc,
+            "omega_deg": 270.0, "incl_deg": 90.0, "period_d": 10.0, "tc": None,
+            "eqt_k": None, "density": None}
+
+
+KEPLER_20 = {"radius_sun": 0.9164, "teff": 5495.0, "mass_sun": 0.929}
+
+
+def _kepler_20():
+    return [_planet("Kepler-20 b", 1.773, 0.04565, 0.083),
+            _planet("Kepler-20 e", 0.821, 0.0637),
+            _planet("Kepler-20 d", 2.606, 0.3474, 0.082)]
+
+
+def test_one_earth_is_one_block_and_so_is_everything_else():
+    """Stars, planets and orbits on one ruler, the same for every system."""
+    planets = _kepler_20()
+    km, star_r, squash = exo.plan(KEPLER_20, planets, 1.0, 2460000.0)
+    assert km == pytest.approx(2 * exo.R_EARTH_KM)
+    assert star_r == pytest.approx(0.9164 * exo.R_SUN_KM / km)
+    for p in planets:
+        assert 2 * p["r_blocks"] == pytest.approx(p["radius_earth"])
+        assert p["a_blocks"] == pytest.approx(p["a_au"] * exo.AU_KM / km)
+        # and so, with honest numbers, nothing is ever inside its star
+        assert star_r < p["a_blocks"] * (1 - p["ecc"]) - p["r_blocks"], p["name"]
+    # the ruler depends on nothing about the system
+    km2 = exo.plan(STAR, [_planet("x", 0.5, 0.01)], 1.0, 2460000.0)[0]
+    assert km2 == km
+    assert exo.plan(KEPLER_20, _kepler_20(), 3.0, 2460000.0)[0] == pytest.approx(km / 3)
+
+
+def test_orbits_tilt_against_each_other_and_not_against_the_sky():
+    """HD 80606 b at 89.24 degrees would rise 140 blocks, past the world top."""
+    single = [dict(_planet("HD 80606 b", 11.57, 0.46, 0.93), incl_deg=89.24)]
+    exo.plan(KEPLER_20, single, 1.0, 2460000.0)
+    assert single[0]["draw_incl"] == pytest.approx(90.0)
+    pair = [dict(_planet("b", 1.0, 0.05), incl_deg=88.0),
+            dict(_planet("c", 1.0, 0.10), incl_deg=90.0)]
+    exo.plan(KEPLER_20, pair, 1.0, 2460000.0)
+    assert abs(pair[0]["draw_incl"] - pair[1]["draw_incl"]) == pytest.approx(2.0, abs=1e-6)
+
+
+def test_one_planet_off_the_plane_does_not_tilt_the_rest():
+    """55 Cnc e at 83.6 degrees dragged a mean far enough to tilt d's orbit,
+    72,000 blocks across, 1,500 blocks out of the plane."""
+    cnc = [dict(_planet("e", 1.88, 0.0154), incl_deg=83.59)] + [
+        dict(_planet(n, 10.0, a), incl_deg=89.73)
+        for n, a in (("b", 0.118), ("c", 0.247), ("f", 0.802), ("d", 5.6))]
+    assert exo.plan(KEPLER_20, cnc, 1.0, 2460000.0, headroom=250.0)[2] == 1.0
+    assert [p["draw_incl"] for p in cnc[1:]] == pytest.approx([90.0] * 4)
+
+
+def test_tilts_are_squashed_only_when_the_world_is_too_short():
+    pair = [dict(_planet("b", 1.0, 1.0), incl_deg=80.0),
+            dict(_planet("c", 1.0, 2.0), incl_deg=90.0)]
+    squash = exo.plan(KEPLER_20, pair, 1.0, 2460000.0, headroom=100.0)[2]
+    assert squash < 1.0
+    for p in pair:
+        x, y, z = p["pos"]
+        assert abs(y) <= 100.0
+    pair = [dict(_planet("b", 1.0, 0.01), incl_deg=89.0),
+            dict(_planet("c", 1.0, 0.02), incl_deg=90.0)]
+    assert exo.plan(KEPLER_20, pair, 1.0, 2460000.0, headroom=100.0)[2] == 1.0
+
+
+def test_a_huge_orbit_is_held_to_a_few_hundred_dots():
+    """Every dot can be a freshly generated chunk."""
+    pts = exo.orbit_ring(66000.0, 0.09, 0.0, 90.0, step=5.0, max_dots=exo.ORBIT_MAX_DOTS)
+    assert len(pts) <= exo.ORBIT_MAX_DOTS
+    assert len(exo.orbit_ring(150.0, 0.0, 0.0, 90.0, step=5.0,
+                              max_dots=exo.ORBIT_MAX_DOTS)) > 150
+
+
+def test_every_other_scale_flag_makes_its_thing_the_size_asked_for():
+    """Each one is turned into an --earth-blocks, so there is still one ruler."""
+    for kw, check in (
+            ("smallest_planet_blocks", lambda ps, sr: 2 * min(p["r_blocks"] for p in ps)),
+            ("star_blocks", lambda ps, sr: 2 * sr),
+            ("farthest_blocks",
+             lambda ps, sr: max(p["a_blocks"] * (1 + p["ecc"]) for p in ps))):
+        planets = _kepler_20()
+        eb = exo.earth_blocks_for(KEPLER_20, planets, **{kw: 40.0})
+        km, star_r, _ = exo.plan(KEPLER_20, planets, eb, 2460000.0)
+        assert check(planets, star_r) == pytest.approx(40.0), kw
+    assert exo.earth_blocks_for(KEPLER_20, _kepler_20()) == 1.0
+
+
+def test_only_what_is_smaller_than_a_block_is_floored():
+    assert exo.under_a_block(0.2) and not exo.under_a_block(0.5)
+    # and a floored body really is drawn as exactly one block
+    world, _ = exo.sphere(0.2, ["STONE"])
+    assert int((world != 0).sum()) == 1
+
+
+def test_the_star_sign_counts_planets_and_the_scale_has_its_own():
+    """'bodies x210' on the star's sign read as 210 bodies."""
+    star = {"n_planets": 8}
+    assert exo.planet_count(star, [1] * 8) == "8 planets"
+    assert exo.planet_count(star, [1] * 7) == "7 of 8 planets"
+    assert exo.planet_count({"n_planets": 1}, [1]) == "1 planet"
+    lines = exo.scale_lines(2 * exo.R_EARTH_KM)
+    assert lines == ("TO SCALE", "Earth 1 blk wide", "Sun 109 blk wide",
+                     "1 AU=11741 blk")
+    for earth_blocks in (0.1, 1.0, 3.0, 10.0):
+        for line in exo.scale_lines(2 * exo.R_EARTH_KM / earth_blocks):
+            assert exo.fit(line) == line, line
+
+
+def test_planets_filed_under_another_name_still_get_a_short_one():
+    assert exo.short_name("TRAPPIST-1 b", "TRAPPIST-1") == "b"
+    assert exo.short_name("Kepler-90 i", "KOI-351") == "i"
 
 
 def test_semi_major_axis_is_shown_in_au_with_useful_digits():

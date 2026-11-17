@@ -5,7 +5,7 @@
     python exoplanets.py --system "Kepler-90"
     python exoplanets.py --date 2026-07-04        # where they were that day
     python exoplanets.py --line                   # strung out, as a diagram
-    python exoplanets.py --true-scale             # honest, and enormous
+    python exoplanets.py --earth-blocks 3         # everything three times bigger
     python exoplanets.py --list                   # systems worth a look
 
 The numbers come from the NASA Exoplanet Archive, live, over its TAP service.
@@ -24,30 +24,27 @@ today, with each orbit outlined so you can see the shape it is moving along.
 its own distance -- which is easier to read as a diagram and tells you nothing
 about where anything actually is.
 
-THE SCALE PROBLEM, AND WHAT IS ACTUALLY DONE ABOUT IT
+ONE RULER, THE SAME FOR EVERY SYSTEM
 
-A planetary system cannot be drawn to scale and also be looked at. In
-TRAPPIST-1 -- the most compact system known, so the kindest possible case --
-the outermost orbit is nearly two thousand times the radius of the smallest
-planet. Drawn at one block per planet radius the system is 1,925 blocks
-across, and a server running view-distance 10 shows you 160 blocks of it. You
-would be standing inside eight percent of a thing you could never see.
+An Earth is one block across, and everything else is on that same ruler:
+the star, the planets, and the distances between them. 1 AU is 11,740 blocks, so a Sun is
+109 blocks across and Jupiter 11, TRAPPIST-1 reaches 730 blocks from its star,
+and 55 Cnc d is 66,000 blocks out. Nothing is fitted to the space available,
+because a scale that changed from one build to the next could not be used to
+compare them, and comparing them is the point. The planets are far apart
+because they are; the build prints a /tp for every one.
 
-So there are two rulers, and this is loud about it:
+--earth-blocks changes the scale, for every system alike. Anything smaller
+than a block -- a planet under one Earth across, at the default -- is still
+drawn as one block, because nothing smaller exists. That is the only thing
+here not to scale, and the build says which bodies it applied to.
 
-  - ORBITS are scaled to fit --span blocks, which is what you can fly around.
-  - BODIES are scaled so the smallest planet is --planet-blocks in radius,
-    which is what makes them visible at all.
-
-The ratio between the two is printed and goes on the sign beside the star.
-Every orrery ever built does this; the dishonest ones just do not say so.
---true-scale collapses both to one number and is worth doing once, so that the
-number stops being an abstraction.
-
-Chasing round planets is what blows the scale up, and it is not worth it. At
-any span you can actually look at, a planet is a few blocks, and a few blocks
-is a lump however carefully it is carved. A legible system of small lumps
-beats a beautiful sphere you have to fly for a minute to get away from.
+Two things are adjusted to make a build that large possible, and both are
+said when they happen. Orbit outlines are held to a few hundred dots each,
+since every dot can make the server generate a chunk. And orbits are tilted
+relative to the system's median inclination, not to our line of sight, and
+squashed if even that will not fit between the floor and the ceiling of the
+world.
 """
 import argparse
 import csv
@@ -98,7 +95,10 @@ STAR_BLOCKS = {
     "VERDANT_FROGLIGHT":     (215, 240, 190),
 }
 
-# Rocky worlds, coldest to hottest, by equilibrium temperature in kelvin.
+# Rocky worlds, coldest to hottest, by equilibrium temperature in kelvin. This
+# is the fallback: where the star is known well enough to say how much light
+# the planet gets, habitable_zone() decides instead, and the temperatures only
+# sort out how hot the ones inside the inner edge are.
 ROCK_BY_TEMP = (
     (180.0, ["PACKED_ICE", "BLUE_ICE"]),
     (320.0, ["GRASS_BLOCK", "STONE"]),
@@ -110,7 +110,37 @@ ROCK_BY_TEMP = (
     (float("inf"), ["MAGMA_BLOCK", "NETHERRACK"]),
 )
 
+ROCK_BY_KIND = {
+    "frozen rock": ["PACKED_ICE", "BLUE_ICE"],
+    "habitable-zone rock": ["GRASS_BLOCK", "STONE"],
+}
+
+# The habitable zone, from Kopparapu et al. 2014, ApJL 787, L29, Table 1: the
+# conservative limits for an Earth-mass planet, runaway greenhouse inside and
+# maximum greenhouse outside. Each is an insolation in units of what Earth
+# gets, as a quartic in (Teff - 5780), fitted for 2600-7200 K.
+#
+# Why not an equilibrium-temperature band: Teq is the temperature with no
+# atmosphere at all, and with whatever albedo that paper happened to assume,
+# so it is neither the habitability criterion nor consistent between rows.
+# Earth's Teq is 255 K. TRAPPIST-1 g is in the habitable zone at 197 K, for
+# the same reason Earth is habitable at 255: a greenhouse makes up the rest.
+HZ_INNER = (1.107, 1.332e-4, 1.580e-8, -8.308e-12, -1.931e-15)
+HZ_OUTER = (0.356, 6.171e-5, 1.698e-9, -3.198e-12, -5.575e-16)
+T_SUN = 5772.0
+
 ORBIT_BLOCK = "WHITE_CONCRETE"
+
+# The most dots one orbit outline gets, however big it is. Every dot is a
+# chunk the server has to load, and generate if nobody has been there: at one
+# Earth to a block, 55 Cnc d's orbit is 66,000 blocks round the star, and a dot
+# every five blocks would make the server generate 26,000 fresh chunks, which
+# is how a build trips the watchdog and stops it. Past a few hundred blocks
+# nobody can see an outline whole anyway; out there the dots are waymarks.
+ORBIT_MAX_DOTS = 720
+
+# Where blocks can exist. Anything set outside this silently is not there.
+WORLD_TOP, WORLD_BOTTOM = 319, -64
 
 # Names the archive files under something else. Kepler-90 is the famous one:
 # it has eight planets, more than any system but ours, and it is in the tables
@@ -150,7 +180,7 @@ def fit(text, px=SIGN_PX):
 SHORT_KIND = {
     "gas giant": "gas giant", "ice giant": "ice giant",
     "sub-Neptune": "sub-Nept", "low density, likely icy": "icy",
-    "frozen rock": "frozen", "temperate rock": "temperate",
+    "frozen rock": "frozen", "habitable-zone rock": "HZ rock",
     "hot rock": "hot", "baked rock": "baked", "molten rock": "molten",
     "unknown": "?", "rock": "rock",
 }
@@ -261,27 +291,73 @@ def kepler_a_au(period_days, star_mass_sun, planet_mass_earth=None):
     return (m_total * years * years) ** (1.0 / 3.0)
 
 
+def _ratdor_au(pl, star):
+    """a from a/R*, using the stellar radius that came on the same row."""
+    ratdor = pl.get("a_over_rstar")
+    rstar = pl.get("st_rad") or star.get("radius_sun")
+    if ratdor and rstar:
+        return ratdor * rstar * R_SUN_KM / AU_KM
+    return None
+
+
 def resolve_orbit(pl, star):
     """Semi-major axis in AU, and how we know it.
 
-    a/R* is the transit observable -- it comes straight out of the shape of the
-    light curve and needs to know neither how big the star is nor how far away
-    -- so where it exists it is the thing to trust.
+    The archive's own value first, then Kepler's law from the period, and a/R*
+    only as a last resort. a/R* looks like the better number -- it comes
+    straight off the light curve -- but a fit that assumes a circular orbit
+    soaks up any eccentricity into it, and it is degenerate with the impact
+    parameter on a noisy transit. Kepler's law needs only the period, which is
+    known to many decimal places, and the stellar mass, which enters as a cube
+    root, so a 10% error in the mass is a 3% error in a. Kepler-90 i is the
+    case in point: a/R* x R* puts it at 0.20 AU, and both the archive and the
+    period put it at 0.12.
     """
-    ratdor, rstar = pl.get("a_over_rstar"), star.get("radius_sun")
-    if ratdor and rstar:
-        return ratdor * rstar * R_SUN_KM / AU_KM, "a/R* x R*"
     if pl.get("a_au"):
         return pl["a_au"], "archive"
-    a = kepler_a_au(pl.get("period_d"), star.get("mass_sun"), pl.get("mass_earth"))
-    return a, "Kepler from P"
+    try:
+        a = kepler_a_au(pl.get("period_d"), pl.get("st_mass") or star.get("mass_sun"),
+                        pl.get("mass_earth"))
+        return a, "Kepler from P"
+    except InsufficientData:
+        pass
+    a = _ratdor_au(pl, star)
+    if a:
+        return a, "a/R* x R*"
+    raise InsufficientData("no semi-major axis, no period and mass, and no a/R*")
+
+
+def orbit_doubts(pl, star, a_au):
+    """Ways the archive disagrees with itself about this planet, if any.
+
+    The composite table takes each number from whichever paper it likes best,
+    one column at a time, so nothing guarantees that a, P, M* and a/R* on one
+    row describe the same planet around the same star. Where two of them can
+    be checked against each other, do, and say so when they do not agree.
+    """
+    doubts = []
+    try:
+        kep = kepler_a_au(pl.get("period_d"), pl.get("st_mass") or star.get("mass_sun"),
+                          pl.get("mass_earth"))
+    except InsufficientData:
+        kep = None
+    if kep and abs(a_au / kep - 1.0) > 0.15:
+        doubts.append("a=%s AU but P and M* give %s" % (_au(a_au), _au(kep)))
+    rat = _ratdor_au(pl, star)
+    if rat and abs(a_au / rat - 1.0) > 0.25:
+        doubts.append("a=%s AU but a/R* x R* gives %s" % (_au(a_au), _au(rat)))
+    rstar_au = (star.get("radius_sun") or 0.0) * R_SUN_KM / AU_KM
+    if rstar_au and a_au * (1.0 - (pl.get("ecc") or 0.0)) < rstar_au:
+        doubts.append("periastron is inside the star")
+    return doubts
 
 
 def resolve_radius(pl, star):
     """Planet radius in Earth radii, and how we know it."""
     if pl.get("radius_earth"):
         return pl["radius_earth"], "archive"
-    ratror, rstar = pl.get("r_over_rstar"), star.get("radius_sun")
+    ratror = pl.get("r_over_rstar")
+    rstar = pl.get("st_rad") or star.get("radius_sun")
     if ratror and rstar:
         return ratror * rstar * R_SUN_KM / R_EARTH_KM, "Rp/R* x R*"
     if pl.get("mass_earth"):
@@ -413,22 +489,27 @@ def fetch_system(host, cache_dir, refresh=False):
     else:
         query = ("select %s from pscomppars where hostname='%s' order by pl_orbsmax"
                  % (COLUMNS, host.replace("'", "''")))
-        url = ARCHIVE + "?query=" + urllib.parse.quote(query) + "&format=csv"
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
-            text = urllib.request.urlopen(req, timeout=120).read().decode("utf-8")
+            text = _tap(query, timeout=120)
         except urllib.error.HTTPError as e:
             raise SystemExit("The archive said no (%s). Check the host name "
                              "spelling with --list." % e)
-        os.makedirs(cache_dir, exist_ok=True)
-        io.open(path, "w", encoding="utf-8", newline="").write(text)
+        # An empty answer is not cached: it would hide the system for good
+        # from anybody who later spells it right, or once it is published.
+        if len(text.strip().splitlines()) > 1:
+            os.makedirs(cache_dir, exist_ok=True)
+            io.open(path, "w", encoding="utf-8", newline="").write(text)
 
     rows = list(csv.DictReader(io.StringIO(text)))
     if not rows:
-        # Exact match failed. Rather than telling somebody their spelling is
-        # wrong, go and look: the archive is happy to do a LIKE, and the answer
-        # is nearly always a name that is almost the one they typed.
-        near = _search(host)
+        # Exact match failed. Nearly always it is the right name spelled
+        # slightly differently -- hd80606 for HD 80606 -- or a planet's name
+        # given for its star's. Both are easy for the archive to answer, so
+        # if there is exactly one answer, use it rather than complain.
+        found, near = _find_host(host)
+        if found:
+            print("(no star called %r; using %r)" % (host, found))
+            return fetch_system(found, cache_dir, refresh)
         msg = "No planets found around %r." % host
         if near:
             msg += "\nDid you mean:\n" + "\n".join(
@@ -459,14 +540,19 @@ def fetch_system(host, cache_dir, refresh=False):
             "ecc": num(row, "pl_orbeccen"),
             "omega_deg": num(row, "pl_orblper"),
             "tc": num(row, "pl_tranmid"),
+            # The star as this row's paper had it, which is what its a/R* and
+            # Rp/R* were measured against.
+            "st_rad": num(row, "st_rad"),
+            "st_mass": num(row, "st_mass"),
         })
+    best = consensus_star(rows)
     star = {
-        "name": rows[0]["hostname"],
-        "teff": num(rows[0], "st_teff"),
-        "radius_sun": num(rows[0], "st_rad"),
-        "mass_sun": num(rows[0], "st_mass"),
-        "dist_pc": num(rows[0], "sy_dist"),
-        "n_planets": num(rows[0], "sy_pnum"),
+        "name": best["hostname"],
+        "teff": num(best, "st_teff"),
+        "radius_sun": num(best, "st_rad"),
+        "mass_sun": num(best, "st_mass"),
+        "dist_pc": num(best, "sy_dist"),
+        "n_planets": num(best, "sy_pnum"),
     }
 
     usable, missing = [], []
@@ -479,34 +565,92 @@ def fetch_system(host, cache_dir, refresh=False):
             continue
         pl["incl_deg"], pl["incl_from"] = resolve_inclination(pl)
         pl["ecc"], pl["omega_deg"], pl["shape_from"] = resolve_shape(pl)
+        pl["doubts"] = orbit_doubts(pl, star, pl["a_au"])
         usable.append(pl)
     usable.sort(key=lambda p: p["a_au"])
     return star, usable, missing
 
 
-def _search(host):
-    """Host names containing what was asked for, most planets first."""
-    stem = host.replace("'", "").strip()
-    query = ("select distinct hostname,sy_pnum from pscomppars "
-             "where upper(hostname) like upper('%%%s%%') order by sy_pnum desc" % stem)
+def consensus_star(rows):
+    """The one row whose stellar parameters most of the planets agree on.
+
+    pscomppars fills each planet's row from whichever paper it judges best for
+    that planet, star included, so one star can have a different radius on
+    every row: KOI-351 has three. Taking the first row means taking whichever
+    planet happens to be innermost. The set most rows share is the closest
+    thing to the archive's opinion of the star, and ties go to the row with
+    the most of the star filled in.
+    """
+    def key(row):
+        return tuple(row.get(k, "") for k in ("st_teff", "st_rad", "st_mass"))
+    counts = {}
+    for row in rows:
+        counts[key(row)] = counts.get(key(row), 0) + 1
+    return max(rows, key=lambda row: (counts[key(row)],
+                                      sum(1 for v in key(row) if v)))
+
+
+def _tap(query, timeout=60):
     url = ARCHIVE + "?query=" + urllib.parse.quote(query) + "&format=csv"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    return urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8")
+
+
+def squash(name):
+    """A name with case, spaces, hyphens and underscores taken out."""
+    return "".join(c for c in name.upper() if c not in " -_'")
+
+
+def _squashed_sql(column):
+    return "upper(replace(replace(replace(%s,' ',''),'-',''),'_',''))" % column
+
+
+def _find_host(host):
+    """(the host meant, if that is certain; otherwise host names that are close).
+
+    Tried in order: the same name spelled differently, a planet's name, and
+    anything containing what was typed.
+    """
+    s = squash(host)
     try:
-        rows = list(csv.DictReader(io.StringIO(
-            urllib.request.urlopen(req, timeout=60).read().decode("utf-8"))))
+        for column in ("hostname", "pl_name"):
+            rows = list(csv.DictReader(io.StringIO(_tap(
+                "select distinct hostname from pscomppars where %s = '%s'"
+                % (_squashed_sql(column), s)))))
+            if len(rows) == 1:
+                return rows[0]["hostname"], []
+        rows = list(csv.DictReader(io.StringIO(_tap(
+            "select distinct hostname,sy_pnum from pscomppars where %s like '%%%s%%' "
+            "order by sy_pnum desc" % (_squashed_sql("hostname"), s)))))
     except Exception:
-        return []
-    return [(r["hostname"], r["sy_pnum"]) for r in rows]
+        return None, []
+    return None, [(r["hostname"], r["sy_pnum"]) for r in rows]
 
 
 def list_systems(limit=30):
-    """Systems with the most known planets, which are the ones worth building."""
-    query = ("select distinct hostname,sy_pnum,st_teff,st_rad,sy_dist "
-             "from pscomppars where sy_pnum >= 5 order by sy_pnum desc, sy_dist asc")
-    url = ARCHIVE + "?query=" + urllib.parse.quote(query) + "&format=csv"
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    rows = list(csv.DictReader(io.StringIO(
-        urllib.request.urlopen(req, timeout=120).read().decode("utf-8"))))
+    """Systems with the most known planets, which are the ones worth building.
+
+    pscomppars has exactly one row per planet, so the planets themselves never
+    repeat. The stars do: each planet's row carries the star as its own paper
+    measured it, and a 'select distinct' over the stellar columns gives one
+    line per distinct radius or temperature -- KOI-351 three times. So fetch
+    every row and keep one per host, chosen the same way a build chooses it.
+    """
+    text = _tap("select hostname,sy_pnum,st_teff,st_rad,st_mass,sy_dist "
+                "from pscomppars where sy_pnum >= 5", timeout=120)
+    by_host = {}
+    for row in csv.DictReader(io.StringIO(text)):
+        by_host.setdefault(row["hostname"], []).append(row)
+    rows = [consensus_star(group) for group in by_host.values()]
+
+    def sort_key(row):
+        try:
+            dist = float(row["sy_dist"])
+        except (TypeError, ValueError):
+            dist = float("inf")
+        return (-int(row["sy_pnum"]), dist)
+    rows.sort(key=sort_key)
+
     print("%-22s %7s %8s %9s  %s" % ("host", "planets", "Teff K", "dist ly", "type"))
     for row in rows[:limit]:
         try:
@@ -555,12 +699,40 @@ def star_material(teff):
     return nearest(blackbody_rgb(teff), STAR_BLOCKS)
 
 
-def planet_materials(radius_earth, eqt_k, density):
+def habitable_zone(teff):
+    """(inner, outer) edges of the conservative habitable zone, in Earth flux.
+
+    Outside 2600-7200 K the fit is held at its end rather than extrapolated:
+    a quartic run off the end of its data goes wherever it likes.
+    """
+    t = max(2600.0, min(7200.0, float(teff))) - 5780.0
+    return tuple(c[0] + c[1] * t + c[2] * t ** 2 + c[3] * t ** 3 + c[4] * t ** 4
+                 for c in (HZ_INNER, HZ_OUTER))
+
+
+def insolation(star, a_au, ecc=0.0):
+    """Light the planet gets, in units of what Earth gets, averaged over an orbit.
+
+    L = R^2 T^4 in solar units, falling off as 1/a^2. An eccentric orbit gets
+    more on average than a circular one of the same a, by 1/sqrt(1 - e^2):
+    the time spent close in outweighs the time spent far out.
+    """
+    r, t = star.get("radius_sun"), star.get("teff")
+    if not r or not t or not a_au:
+        return None
+    lum = r * r * (t / T_SUN) ** 4
+    return lum / (a_au * a_au) / math.sqrt(1.0 - min(float(ecc or 0.0), 0.95) ** 2)
+
+
+def planet_materials(radius_earth, eqt_k, density, insol=None, teff=None):
     """What a planet is probably made of, from what the archive actually knows.
 
     Radius is the strong signal: above about four Earth radii nothing is known
     that is not mostly gas, because rock that big would have swept up an
     atmosphere it could not lose. Below about 1.6 nearly everything is rock.
+
+    A rock is green when it is in the habitable zone, which is decided by how
+    much light it gets and not by its equilibrium temperature -- see HZ_INNER.
     """
     if radius_earth is None:
         return ["STONE"], "unknown"
@@ -582,10 +754,25 @@ def planet_materials(radius_earth, eqt_k, density):
     if dense is False and radius_earth > 1.2:
         return ["PACKED_ICE", "BLUE_ICE"], "low density, likely icy"
 
+    hot_only = False
+    if insol and teff:
+        inner, outer = habitable_zone(teff)
+        if insol < outer:
+            return ROCK_BY_KIND["frozen rock"], "frozen rock"
+        if insol <= inner:
+            return ROCK_BY_KIND["habitable-zone rock"], "habitable-zone rock"
+        # Inside the inner edge: hot, and Teq says how hot. Zero albedo,
+        # since a planet that close is not keeping its clouds.
+        hot_only = True
+        if eqt_k is None:
+            eqt_k = 278.6 * insol ** 0.25
+
     t = eqt_k if eqt_k is not None else 255.0
     for limit, mats in ROCK_BY_TEMP:
+        if hot_only and limit <= 320.0:
+            continue
         if t < limit:
-            kind = {"PACKED_ICE": "frozen rock", "GRASS_BLOCK": "temperate rock",
+            kind = {"PACKED_ICE": "frozen rock", "GRASS_BLOCK": "habitable-zone rock",
                     "TERRACOTTA": "hot rock", "BLACKSTONE": "baked rock",
                     "MAGMA_BLOCK": "molten rock"}[mats[0]]
             return mats, kind
@@ -643,7 +830,7 @@ def sphere(radius, materials, banded=False):
     return world, list(materials)
 
 
-def orbit_ring(a_blocks, ecc, omega_deg, incl_deg, step=5.0):
+def orbit_ring(a_blocks, ecc, omega_deg, incl_deg, step=5.0, max_dots=None):
     """Points tracing one orbit, evenly spaced all the way round.
 
     Two things have to be right and neither is free.
@@ -677,6 +864,8 @@ def orbit_ring(a_blocks, ecc, omega_deg, incl_deg, step=5.0):
         return []
 
     count = max(8, int(round(perimeter / max(step, 0.5))))
+    if max_dots:
+        count = min(count, int(max_dots))
     pts, j = set(), 0
     for k in range(count):
         target = perimeter * k / count
@@ -691,23 +880,39 @@ def orbit_ring(a_blocks, ecc, omega_deg, incl_deg, step=5.0):
 
 # ── building ───────────────────────────────────────────────────────────────
 
-def plan(star, planets, planet_blocks, span, true_scale, jd):
-    """The two rulers, and where every body goes.
+def plan(star, planets, earth_blocks, jd, headroom=float("inf")):
+    """The ruler, and where every body goes.
 
-    Bodies and orbits are measured with different ones, and this is the single
-    place that is decided. Returns (km per block for bodies, km per block for
-    orbits, star radius in blocks).
+    One ruler for star, planets and orbits, and the same one for every system:
+    an Earth is earth_blocks across. This is the single place it is decided.
+    Returns (km per block, star radius in blocks, how much the tilts had to
+    be squashed to fit between the build limits -- 1.0 when they did not).
+
+    Orbits are tilted relative to the system's median inclination, not to
+    the sky. The sky-plane angle says how the system happens to face us,
+    which means nothing in a Minecraft world, and at this scale it does harm:
+    HD 80606 b, at 89.24 degrees, would rise 140 blocks off the plane, past
+    the top of the world. What the planets' inclinations say about each other
+    is what is worth keeping.
     """
-    body_km = min(p["radius_earth"] * R_EARTH_KM for p in planets) / float(planet_blocks)
-    widest = max(p["a_au"] for p in planets) * AU_KM
-    orbit_km = body_km if true_scale else widest / float(span)
-    star_r = (star.get("radius_sun") or 0.1) * R_SUN_KM / body_km
+    km = 2.0 * R_EARTH_KM / float(earth_blocks)
+    star_r = (star.get("radius_sun") or 0.1) * R_SUN_KM / km
+    # The median, not the mean: one planet well off the plane -- 55 Cnc e, at
+    # 83.6 degrees -- drags a mean far enough to tilt every other orbit, and
+    # 55 Cnc d's is 72,000 blocks across, so a degree is 1,200 blocks of
+    # height. With the median the odd one out tilts and the rest lie flat.
+    mean_incl = float(np.median([p["incl_deg"] for p in planets]))
+    rise = max(p["a_au"] * AU_KM / km * (1.0 + p["ecc"])
+               * abs(math.sin(math.radians(p["incl_deg"] - mean_incl)))
+               + p["radius_earth"] * R_EARTH_KM / km for p in planets)
+    squash = min(1.0, headroom / rise) if rise > 0 else 1.0
 
     for p in planets:
-        p["r_blocks"] = p["radius_earth"] * R_EARTH_KM / body_km
-        p["a_blocks"] = p["a_au"] * AU_KM / orbit_km
+        p["r_blocks"] = p["radius_earth"] * R_EARTH_KM / km
+        p["a_blocks"] = p["a_au"] * AU_KM / km
+        p["insol"] = insolation(star, p["a_au"], p["ecc"])
         p["materials"], p["kind"] = planet_materials(
-            p["radius_earth"], p["eqt_k"], p["density"])
+            p["radius_earth"], p["eqt_k"], p["density"], p["insol"], star.get("teff"))
         try:
             f = true_anomaly_at(jd, p.get("tc"), p["period_d"],
                                 p["ecc"], p["omega_deg"])
@@ -717,9 +922,40 @@ def plan(star, planets, planet_blocks, span, true_scale, jd):
             p["phase_from"] = "unknown: at periastron"
         p["true_anomaly"] = f
         x, z = orbit_xz(p["a_blocks"], p["ecc"], p["omega_deg"], f)
-        tilt = math.sin(math.radians(90.0 - p["incl_deg"]))
+        tilt = squash * math.sin(math.radians(mean_incl - p["incl_deg"]))
+        # What orbit_ring takes: the inclination that gives this tilt.
+        p["draw_incl"] = 90.0 - math.degrees(math.asin(tilt))
         p["pos"] = (x, -z * tilt, z)
-    return body_km, orbit_km, star_r
+    return km, star_r, squash
+
+
+def earth_blocks_for(star, planets, smallest_planet_blocks=None, star_blocks=None,
+                     farthest_blocks=None):
+    """The --earth-blocks that makes one chosen thing the size asked for.
+
+    Every other way of setting the scale is turned into this one, so there is
+    still exactly one ruler, and still one number that says what it is.
+    """
+    earth_km = 2.0 * R_EARTH_KM
+    if smallest_planet_blocks is not None:
+        return smallest_planet_blocks / min(p["radius_earth"] for p in planets)
+    if star_blocks is not None:
+        if not star.get("radius_sun"):
+            raise SystemExit("The archive has no radius for %s, so --star-blocks"
+                             " has nothing to measure." % star["name"])
+        return star_blocks * earth_km / (2.0 * star["radius_sun"] * R_SUN_KM)
+    if farthest_blocks is not None:
+        reach = max(p["a_au"] * (1.0 + p["ecc"]) for p in planets) * AU_KM
+        return farthest_blocks * earth_km / reach
+    return 1.0
+
+
+def under_a_block(r_blocks):
+    """True when a body is too small to draw at all, and so gets one block.
+
+    One block is a ball of radius one half, so that is where the line is.
+    """
+    return r_blocks < 0.5
 
 
 def build_body(mc, world, palette, centre, pace):
@@ -765,7 +1001,42 @@ def save_manifest(data_dir, host, boxes):
         json.dumps({"boxes": [list(map(int, b)) for b in boxes]}, indent=1))
 
 
-def signpost(mc, star, planets, sx, sy, sz, star_r, body_km, orbit_km, when):
+def planet_count(star, planets):
+    """'7 planets', or '7 of 8 planets' when the archive knows of more."""
+    listed = int(star.get("n_planets") or 0)
+    if listed > len(planets):
+        return "%d of %d planets" % (len(planets), listed)
+    return "%d planet%s" % (len(planets), "" if len(planets) == 1 else "s")
+
+
+def _blocks(n):
+    """A size in blocks, with digits enough to tell 0.02 from 0.2."""
+    return ("%.0f" % n) if n >= 10 else ("%.1f" % n) if n >= 1 else ("%.2g" % n)
+
+
+def scale_lines(km):
+    """The four lines of the sign that says what the scale is.
+
+    The same in every system, which is the point of it: the Earth, the Sun and
+    the Earth's distance from it, all in blocks, so that every build is
+    measured against the one thing everybody already knows.
+    """
+    def n(v):
+        return ("%.0f" % v) if v >= 10 else ("%.3g" % v)
+    return ("TO SCALE",
+            "Earth %s blk wide" % n(2.0 * R_EARTH_KM / km),
+            "Sun %s blk wide" % n(2.0 * R_SUN_KM / km),
+            "1 AU=%s blk" % n(AU_KM / km))
+
+
+def short_name(planet_name, star_name):
+    """'b' for TRAPPIST-1 b -- and 'i' for Kepler-90 i, filed under KOI-351."""
+    if planet_name.startswith(star_name):
+        return planet_name[len(star_name):].strip() or planet_name
+    return planet_name.rsplit(" ", 1)[-1]
+
+
+def signpost(mc, star, planets, sx, sy, sz, star_r, km, when):
     """A row of signs by the star with every planet's coordinates on it.
 
     Without this you fly off into an empty sky hoping you have not drifted,
@@ -781,7 +1052,7 @@ def signpost(mc, star, planets, sx, sy, sz, star_r, body_km, orbit_km, when):
     # from west to east reads backwards, star last. Laying it out from east to
     # west puts the star on the reader's left and the planets in order after
     # it, which is how anybody would expect to find them.
-    order = [None] + list(planets)              # None is the star
+    order = [None, "scale"] + list(planets)     # None is the star
     x_for = {}
     right = int(sx + 6)
     for i, item in enumerate(order):
@@ -791,7 +1062,6 @@ def signpost(mc, star, planets, sx, sy, sz, star_r, body_km, orbit_km, when):
     mc.setBlocks(x_lo, sy - 2, z - 2, x_hi, sy - 2, z + 2, "POLISHED_ANDESITE")
     boxes.append((x_lo, sy - 2, z - 2, x_hi, sy + 1, z + 2))
 
-    exagg = orbit_km / body_km
     for i, item in enumerate(order):
         x = x_for[i]
         mc.setBlock(x, sy - 1, z, "POLISHED_BLACKSTONE")
@@ -799,10 +1069,12 @@ def signpost(mc, star, planets, sx, sy, sz, star_r, body_km, orbit_km, when):
             lines = (star["name"],
                      "%d %d %d" % (sx, sy, sz),
                      when,
-                     "true scale" if exagg < 1.01 else "bodies x%.0f" % exagg)
+                     planet_count(star, planets))
+        elif item == "scale":
+            lines = scale_lines(km)
         else:
             px, py, pz = item["pos"]
-            short = item["name"].replace(star["name"], "").strip() or item["name"]
+            short = short_name(item["name"], star["name"])
             lines = ("%s %s" % (short, SHORT_KIND.get(item["kind"], item["kind"])),
                      "%d %d %d" % (int(sx + round(px)), int(sy + round(py)),
                                    int(sz + round(pz))),
@@ -821,17 +1093,21 @@ def main():
     connect.add_arguments(p)
     p.add_argument("--system", default="TRAPPIST-1",
                    help="host star name, exactly as the archive spells it")
-    p.add_argument("--span", type=float, default=300.0,
-                   help="blocks from the star to the outermost planet -- the "
-                        "size of the whole build, so make it something you can "
-                        "fly round (default 300)")
-    p.add_argument("--planet-blocks", type=float, default=1.5,
-                   help="radius of the SMALLEST planet, in blocks. Below about "
-                        "1.4 a ball has no corners left to round off and comes "
-                        "out a cross (default 1.5)")
-    p.add_argument("--true-scale", action="store_true",
-                   help="one ruler for bodies and orbits: honest, and usually "
-                        "thousands of blocks across")
+    scale = p.add_argument_group(
+        "scale", "One ruler for everything, set by at most one of these. Only "
+        "--earth-blocks means the same in every system; the others fit the "
+        "ruler to this one, so builds of different systems stop being "
+        "comparable.")
+    scale = scale.add_mutually_exclusive_group()
+    scale.add_argument("--earth-blocks", type=float,
+                       help="how many blocks across an Earth is (default 1)")
+    scale.add_argument("--smallest-planet-blocks", type=float, metavar="N",
+                       help="make the smallest planet N blocks across")
+    scale.add_argument("--star-blocks", type=float, metavar="N",
+                       help="make the star N blocks across")
+    scale.add_argument("--farthest-blocks", type=float, metavar="N",
+                       help="make the farthest any planet gets from the star, "
+                            "at apastron, N blocks")
     p.add_argument("--line", action="store_true",
                    help="ignore the real positions and string the planets along "
                         "+X, which reads better as a diagram")
@@ -878,15 +1154,27 @@ def main():
         return
 
     star, planets, missing = fetch_system(args.system, data, args.refresh)
-    body_km, orbit_km, star_r = plan(star, planets, args.planet_blocks,
-                                     args.span, args.true_scale, jd)
+    sy = args.at[1]
+    headroom = min(WORLD_TOP - sy, sy - WORLD_BOTTOM) - 2
+    set_by = scale_flag = None
+    for flag in ("smallest_planet_blocks", "star_blocks", "farthest_blocks"):
+        if getattr(args, flag) is not None:
+            scale_flag = flag
+            set_by = "--%s %g" % (flag.replace("_", "-"), getattr(args, flag))
+            args.earth_blocks = earth_blocks_for(
+                star, planets, **{flag: getattr(args, flag)})
+    if args.earth_blocks is None:
+        args.earth_blocks = 1.0
+    if args.earth_blocks <= 0:
+        raise SystemExit("The scale has to come out positive.")
+    km, star_r, squash = plan(star, planets, args.earth_blocks, jd, headroom)
     star_block = star_material(star["teff"] or 5000.0)
     rgb = blackbody_rgb(star["teff"] or 5000.0)
 
     if args.line:
         for pl in planets:
             pl["pos"] = (pl["a_blocks"],
-                         pl["a_blocks"] * math.cos(math.radians(pl["incl_deg"])),
+                         pl["a_blocks"] * math.cos(math.radians(pl["draw_incl"])),
                          0.0)
 
     print("%s -- %d planets returned, %d of them drawable"
@@ -906,32 +1194,54 @@ def main():
     print("  colour %s -> %s" % (rgb, star_block))
     print()
     print("  as it stands on %s (JD %.3f)" % (when.strftime("%Y-%m-%d"), jd))
-    print("  bodies:  1 block = %8.0f km" % body_km)
-    print("  orbits:  1 block = %8.0f km" % orbit_km)
-    exagg = orbit_km / body_km
-    if exagg < 1.01:
-        print("  one ruler for both -- true scale")
-    else:
-        print("  so the bodies are drawn %.0f times too big for the orbits."
-              % exagg)
-        print("  Every orrery does this; --true-scale does not.")
-    print("  star radius %.1f blocks (%.0f across)" % (star_r, star_r * 2))
-
-    inner = min(q["a_blocks"] for q in planets)
-    if star_r > inner * 0.8:
-        print("  WARNING: the star is nearly as big as the innermost orbit.")
-        print("  Try --planet-blocks %.2f, or a larger --span."
-              % (args.planet_blocks * inner * 0.5 / max(star_r, 1e-9)))
+    print("  to scale: an Earth is %.3g block%s across (1 block = %.0f km), for"
+          " the star, the" % (args.earth_blocks,
+                              "" if args.earth_blocks == 1 else "s", km))
+    print("  planets and the orbits alike. 1 AU is %.0f blocks." % (AU_KM / km))
+    if set_by:
+        print("  (set by %s, the same as --earth-blocks %.3g: fitted to this"
+              % (set_by, args.earth_blocks))
+        print("   system, so it will not match builds of other systems)")
+    print("  star radius %s blocks" % _blocks(star_r))
+    if star_r > headroom:
+        print("  WARNING: the star is taller than the world has room for at"
+              " y=%d; the" % sy)
+        print("  top and bottom of it will be missing. Try --earth-blocks %.2g."
+              % (args.earth_blocks * headroom / star_r * 0.9))
+    if squash < 0.999:
+        print("  the orbits' tilts are squashed %.0f times to fit between y=%d"
+              " and y=%d" % (1.0 / squash, WORLD_BOTTOM, WORLD_TOP))
+    tiny = [pl["name"] for pl in planets if under_a_block(pl["r_blocks"])]
+    if under_a_block(star_r):
+        tiny.insert(0, star["name"])
+    if tiny:
+        print("  smaller than a block, so drawn as one -- the only thing not to"
+              " scale:")
+        print("      %s" % ", ".join(tiny))
+    hz = habitable_zone(star["teff"]) if star.get("teff") else None
+    if hz:
+        print("  habitable zone: from %.2f down to %.2f times Earth's sunlight"
+              " (Kopparapu 2014, conservative)" % hz)
     print()
 
-    print("  %-16s %8s %8s %7s %7s %7s  %-18s %s"
-          % ("planet", "a (AU)", "R/Earth", "a blks", "e", "incl",
-             "made of", "phase"))
+    print("  %-16s %8s %8s %7s %7s %7s %7s %6s %6s  %-19s %s"
+          % ("planet", "a (AU)", "R/Earth", "r blks", "a blks", "e", "incl",
+             "Teq K", "S/Ear", "made of", "phase"))
     for pl in planets:
-        print("  %-16s %8s %8.2f %7.0f %7.4f %7.2f  %-18s %s"
+        print("  %-16s %8s %8.2f %7s %7.0f %7.4f %7.2f %6s %6s  %-19s %s"
               % (pl["name"], _au(pl["a_au"]), pl["radius_earth"],
-                 pl["a_blocks"], pl["ecc"], pl["incl_deg"], pl["kind"],
-                 pl["phase_from"]))
+                 _blocks(pl["r_blocks"]), pl["a_blocks"], pl["ecc"], pl["incl_deg"],
+                 "%.0f" % pl["eqt_k"] if pl["eqt_k"] else "-",
+                 "%.3g" % pl["insol"] if pl["insol"] else "-",
+                 pl["kind"], pl["phase_from"]))
+    doubtful = [pl for pl in planets if pl["doubts"]]
+    if doubtful:
+        print()
+        print("  The archive disagrees with itself here (using a from %s):"
+              % ", ".join(sorted(set(pl["a_from"] for pl in doubtful))))
+        for pl in doubtful:
+            for d in pl["doubts"]:
+                print("      %-16s %s" % (pl["name"], d))
 
     total = int((sphere(star_r, [star_block])[0] != 0).sum())
     for pl in planets:
@@ -941,19 +1251,38 @@ def main():
     if not args.no_orbits and not args.line:
         for pl in planets:
             rings += len(orbit_ring(pl["a_blocks"], pl["ecc"], pl["omega_deg"],
-                                    pl["incl_deg"], args.orbit_step))
+                                    pl["draw_incl"], args.orbit_step,
+                                    ORBIT_MAX_DOTS))
     print()
     print("  %d blocks of bodies + %d of orbit outline = %d, about %.0f seconds"
           % (total, rings, total + rings, (total + rings) / 12000.0))
-    print("  the outermost planet is %.0f blocks from the star"
-          % max(q["a_blocks"] for q in planets))
+    reach = max(q["a_blocks"] * (1.0 + q["ecc"]) for q in planets)
+    print("  the farthest any planet gets is %.0f blocks from the star --"
+          " /tp to it" % reach)
+    if not args.no_orbits and not args.line:
+        # Only worth saying once the dots are more than a chunk apart: closer
+        # than that, every chunk on the orbit gets one whatever the cap.
+        sparse = ["%s (%.0f)" % (short_name(pl["name"], star["name"]), gap)
+                  for pl in planets
+                  for gap in [2 * math.pi * pl["a_blocks"] / ORBIT_MAX_DOTS]
+                  if gap > 16]
+        if sparse:
+            print("  orbit outlines are held to %d dots, so the server is not"
+                  " made to" % ORBIT_MAX_DOTS)
+            print("  generate a chunk every few blocks. Blocks between dots: %s"
+                  % ", ".join(sparse))
 
     if total + rings > args.budget and not args.force:
-        fits = args.planet_blocks * (float(args.budget) / (total + rings)) ** 0.5
+        # Big bodies are hollow, so the count grows about as the square of
+        # the size; near enough for a suggestion.
+        shrink = (float(args.budget) / (total + rings)) ** 0.5 * 0.95
         print()
         print("  That is over the budget of %d." % args.budget)
-        print("  --planet-blocks %.2f would fit; --force builds it anyway."
-              % max(0.3, fits * 0.95))
+        # Every scale flag is proportional to the ruler, so the same factor
+        # applies to whichever one was used.
+        flag = scale_flag or "earth_blocks"
+        print("  --%s %.2g would fit; --force builds it anyway."
+              % (flag.replace("_", "-"), getattr(args, flag) * shrink))
         return
 
     if args.dry_run:
@@ -974,15 +1303,14 @@ def main():
         print()
         print("building the star: %d blocks of %s"
               % (int((world != 0).sum()), star_block))
-        mc.postToChat("%s as it stands on %s. Bodies and orbits are on "
-                      "different scales -- see the sign."
+        mc.postToChat("%s as it stands on %s, all to one scale -- see the sign."
                       % (star["name"], when.strftime("%d %b %Y")))
         boxes.append(build_body(mc, world, palette, (sx, sy, sz), args.pace))
 
         if not args.no_orbits and not args.line:
             for pl in planets:
                 pts = orbit_ring(pl["a_blocks"], pl["ecc"], pl["omega_deg"],
-                                 pl["incl_deg"], args.orbit_step)
+                                 pl["draw_incl"], args.orbit_step, ORBIT_MAX_DOTS)
                 # origin=(0,0,0) because these are already absolute. Left
                 # out, buildVoxels defaults the origin to the PLAYER, and the
                 # whole orbit is drawn that far from where it belongs -- which
@@ -1011,19 +1339,23 @@ def main():
             if not args.no_signs:
                 base = int(at[1] - max(pl["r_blocks"], 1) - 3)
                 mc.setBlock(at[0], base, at[2], "POLISHED_BLACKSTONE")
-                short = pl["name"].replace(star["name"], "").strip() or pl["name"]
+                short = short_name(pl["name"], star["name"])
                 mc.setSign(at[0], base + 1, at[2], "OAK_SIGN", "NORTH",
                            *[fit(v) for v in (
                                short,
                                "%.2f Re" % pl["radius_earth"],
-                               ("%.0f K" % pl["eqt_k"]) if pl["eqt_k"] else "",
+                               # Teq alone looked wrong on a green planet at
+                               # 197 K; the sunlight is what put it there.
+                               " ".join(v for v in (
+                                   ("%.0f K" % pl["eqt_k"]) if pl["eqt_k"] else "",
+                                   ("S=%.2f" % pl["insol"]) if pl["insol"] else "")
+                                   if v),
                                "a=%s AU" % _au(pl["a_au"]))])
                 boxes.append((at[0], base, at[2], at[0], base + 1, at[2]))
 
         if not args.no_signs:
             board_z, board_boxes = signpost(mc, star, planets, sx, sy, sz,
-                                            star_r, body_km, orbit_km,
-                                            when.strftime("%d %b %Y"))
+                                            star_r, km, when.strftime("%d %b %Y"))
             boxes.extend(board_boxes)
             print()
             print("  noticeboard at %d %d %d -- stand south of it, looking"
