@@ -47,3 +47,7 @@ examples/data/exo_build_*.json
 # purpose, so the examples run with no network at all.
 examples/data/moon_*.npz
 examples/data/mars_*.npz
+
+# PDB entries fetched by protein.py. Small, but there are 200,000 of them and
+# they never change, so there is no reason to carry any particular one.
+examples/data/pdb_*.pdb
