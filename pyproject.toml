@@ -14,10 +14,11 @@ readme = "README.md"
 authors = [{ name = "Jason Eastman", email = "jdeast@gmail.com" }]
 keywords = ["minecraft", "plugin", "scratch", "java", "bukkit", "education"]
 
-# 3.9 rather than the 3.6 setup.py claimed. numpy has not supported 3.8 for
-# years, so the old floor was never true, and CI tests 3.9 upward. A version
-# that is claimed should be tested, or the claim should be narrowed.
-requires-python = ">=3.9"
+# 3.10 rather than the 3.6 setup.py once claimed. CI tests 3.10 upward, and a
+# version that is claimed should be tested, or the claim should be narrowed.
+# 3.9 was dropped when it reached end-of-life and GitHub's runner images
+# stopped providing it, so it could no longer be tested.
+requires-python = ">=3.10"
 
 dependencies = ["numpy"]
 
@@ -27,7 +28,6 @@ classifiers = [
     "Topic :: Games/Entertainment",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

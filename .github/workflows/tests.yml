@@ -29,7 +29,7 @@ jobs:
       # cancelled" tells you much less than seeing which versions passed.
       fail-fast: false
       matrix:
-        python: ["3.9", "3.11", "3.13"]
+        python: ["3.10", "3.11", "3.13"]
 
     steps:
       - uses: actions/checkout@v7
@@ -39,7 +39,7 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
 
-      # The floor is tested, not just claimed. pyproject says >=3.9, and this
+      # The floor is tested, not just claimed. pyproject says >=3.10, and this
       # project's own history includes a release that would not import on 3.10
       # because of a collections.abc change -- claiming a version without
       # testing it is how that ships.
